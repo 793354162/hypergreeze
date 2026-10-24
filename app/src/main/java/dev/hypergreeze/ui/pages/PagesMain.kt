@@ -167,8 +167,7 @@ fun HomePage(
                     MiuixCard {
                         MiuixRow(
                             title = "启用步骤",
-                            subtitle = "1) LSPosed 里启用本模块（作用域只勾「系统框架」）\n" +
-                                "2) 授予「修改系统设置」\n3) 软重启 system_server",
+                            subtitle = "LSPosed 启用（作用域只勾「系统框架」）→ 授予「修改系统设置」→ 软重启 system_server",
                             onClick = onOpenManager,
                             value = "打开 LSPosed",
                             valueColor = colors.primary,
