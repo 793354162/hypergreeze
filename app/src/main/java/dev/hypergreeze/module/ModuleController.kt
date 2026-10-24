@@ -143,6 +143,7 @@ class ModuleController(
         lastRevision = policyStore.policy.revision
 
         consumeSafeModeRequest(tm)
+        consumeGuardReset(tm)
         registerObservers(ctx)
         applyGlobalSideEffects(policyStore.engine)
         tm.record(
@@ -186,6 +187,18 @@ class ModuleController(
         SysProp.set(SafetyGuard.PROP_SAFE_REASON, reason)
         tm.writeFlag(Keys.SAFE_MODE_REQUEST, false)
         Logx.w("safe-mode request consumed ($reason); next boot stays passive")
+    }
+
+    /**
+     * `adb shell settings put system greeze_ctl_boot_guard_v1 0` (or the diagnostics page) clears
+     * the boot-loop counter without needing `setprop`. The authoritative state stays in
+     * `persist.sys.hypergreeze.guard`; this key is only a one-shot request, deleted once consumed.
+     */
+    private fun consumeGuardReset(tm: ModuleTelemetry) {
+        if (tm.readString(Keys.BOOT_GUARD)?.trim() != "0") return
+        SysProp.setInt(SafetyGuard.PROP_GUARD, 0)
+        tm.writeString(Keys.BOOT_GUARD, null)
+        Logx.i("boot guard counter cleared by Settings request")
     }
 
     private fun registerObservers(ctx: Context) {

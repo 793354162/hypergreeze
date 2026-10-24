@@ -488,12 +488,12 @@ adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"screen-on
 
 ## 12. 为什么没有 hook `isRestrictReceiver` / `udpPackageRestrict` / `jobRestrict`
 
-这三者在模块里是**动作**，不是**判定点**：`HookInstaller.applyResources(uid, pkg)`（`HookInstaller.kt:502-510`）在「即将强制冻结某个 uid」那一刻调用它们一次，然后才 `freezeUid`。挂 hook 需要「每次调用都要不要改写结果」的语义，而它们没有可改写的东西。
+`udpPackageRestrict` / `jobRestrict` 在模块里是**动作**，不是**判定点**：`HookInstaller.applyResources(uid, pkg)`（`HookInstaller.kt:502-510`）在「即将强制冻结某个 uid」那一刻调用它们一次，然后才 `freezeUid`。挂 hook 需要「每次调用都要不要改写结果」的语义，而它们没有可改写的东西。`isRestrictReceiver` 更彻底——它**既没被 hook，也没被调用**（只留一条 probe spec）。
 
 | 成员 | 契约里的形态 | 模块里的用法 | 不 hook 的原因 |
 |---|---|---|---|
-| `udpPackageRestrict(int, boolean)` | **private**、`void`（契约 §A.5 [:366]；§H-10 需 `setAccessible`） | `applyResources` → `facade.setUdpRestrict(uid, it)`（`HookInstaller.kt:507`、`GreezeFacade.kt:312`） | 纯 setter，无返回值可改写。它是 per-uid 网络限制的**写入口**，GreeZe 内部自己也调它；hook 它只能旁观系统写状态，反而会和 GreeZe 的网络状态机抢写。模块只在需要「加限制」时调一次，从不解限（`core/ResourceSwitches.kt` 的 KDoc） |
-| `jobRestrict(int)` | public、**返回 `void`**（契约 §A.5 [:480]，注意不是 boolean） | `applyResources` → `facade.setJobRestrict(uid)`（508、`GreezeFacade.kt:307`） | 返回 void → 没有任何「改写返回值」的余地；`callUnit` 的语义只是「invoke 没抛异常」（`GreezeFacade.kt:163-175`），无法判断是否真的生效 |
+| `udpPackageRestrict(int, boolean)` | **private**、`void`（契约 §A.5 [:366]；§H-10 需 `setAccessible`） | `applyResources` → `facade.setUdpRestrict(uid, it)`（`HookInstaller.kt:507`、`GreezeFacade.kt:314`） | 纯 setter，无返回值可改写。它是 per-uid 网络限制的**写入口**，GreeZe 内部自己也调它；hook 它只能旁观系统写状态，反而会和 GreeZe 的网络状态机抢写。模块只在需要「加限制」时调一次，从不解限（`core/ResourceSwitches.kt` 的 KDoc） |
+| `jobRestrict(int)` | public、**返回 `void`**（契约 §A.5 [:480]，注意不是 boolean） | `applyResources` → `facade.setJobRestrict(uid)`（508、`GreezeFacade.kt:309`） | 返回 void → 没有任何「改写返回值」的余地；`callUnit` 的语义只是「invoke 没抛异常」（`GreezeFacade.kt:163-175`），无法判断是否真的生效 |
 | `isRestrictReceiver(Intent, int, String, int, String)` | 包内可见、返回 `boolean`（契约 §A.5 [:470]） | **既没 hook 也没调用**；只在 probe 里记一条 spec（`GreezeProbe.kt:147`），并计入能力位 `resources`（53-58） | 5 个参数里有两个 `int`、两个 `String`，无法唯一确定哪个是包名、哪个是 uid / userId；猜错会影响**全局**广播，而不是单个 App。`HookInstaller.kt:497-501` 的注释就是这个决定 |
 
 补充两点：

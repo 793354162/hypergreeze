@@ -17,8 +17,8 @@
 | 键 | `greeze_ctl_heartbeat_v1` | hook → App | JSON object |
 | 键 | `greeze_ctl_events_v1` | hook → App | JSON array（≤60 条） |
 | 键 | `greeze_ctl_logs_v1` | hook → App | JSON array（≤120 行字符串） |
-| 键 | `greeze_ctl_boot_guard_v1` | — | 已声明，**无读写方**（见 §11） |
-| 键 | `greeze_ctl_safe_mode_v1` | App 写入，**无 hook 读取方**（见 §11） | 字符串 `"1"` |
+| 键 | `greeze_ctl_boot_guard_v1` | App 或 adb 写入 `"0"`，hook 消费后删除 | 清零请求（守卫真值在系统属性） |
+| 键 | `greeze_ctl_safe_mode_v1` | App 写入 `"1"`，hook 消费后清回 `"0"` | 字符串 `"1"` |
 | 键 | `greeze_ctl_safe_mode_reason_v1` | App 写入（自检探针也用它） | 任意字符串 |
 | 属性 | `persist.sys.hypergreeze.guard` | hook 读写 | 十进制整数 |
 | 属性 | `persist.sys.hypergreeze.safe` | hook 读写 | `0` / `1` |
@@ -119,7 +119,9 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 
 | 键名 | 写入方 | 类型 | 内容 | 容量 / 上限 | 示例 |
 |---|---|---|---|---|---|
-| `greeze_ctl_boot_guard_v1` | **无**（常量只在 `Keys.ALL` 里出现） | 声明为「纯整数字符串」 | 意图是把守卫计数镜像到 Settings；**实际实现用的是系统属性**，见 §11 | — | 期望形态 `"2"`，但当前没有任何代码写入它 |
+| `greeze_ctl_boot_guard_v1` | App / adb 写 `"0"`；hook 侧 `ModuleController.consumeGuardReset` 读到后**清零并删除该键** | 字符串 `"0"`（其他值忽略） | 一次性「清空启动守卫计数」请求。守卫的权威状态在系统属性 `persist.sys.hypergreeze.guard`，这个键只是让没有 `setprop` 的场景（普通 App、adb 用户）也能清 | 单值 | `adb shell settings put system greeze_ctl_boot_guard_v1 0` |
+
+> 语义是「下一次 `ensureContext` 执行时清零」，即约开机后几秒内生效，**不是**立即。
 
 ### 2.7 `greeze_ctl_safe_mode_v1`
 
@@ -701,7 +703,7 @@ done
 | 5 | `resources.alarm/broadcast/cpu` | 无 setter 调用（只有 `net` / `job` / `wakelock` 三项落地） | `HookInstaller.kt:420-428` |
 | 6 | `thawOn.netChange/notification/audioFocus/charging` | 无 hook 消费 | `HookInstaller.kt` 全文 |
 | 7 | `resetCgroup` op | 实现等同 `thawAll`，没有调 `resetCgroupUidStatus` / `resetCgroupUidFreezeStatus` | `ModuleController.kt:287-288` |
-| 8 | 键 `greeze_ctl_boot_guard_v1` | 只在 `Keys.ALL` 里出现，无读写方；守卫真值在 `persist.sys.hypergreeze.guard` | `core/Keys.kt:24, 38-40` |
+| 8 | 键 `greeze_ctl_boot_guard_v1` | 是一次性清零请求：写 `"0"` → hook 清 `persist.sys.hypergreeze.guard` 并删除键；守卫的权威状态仍在属性里 | `ModuleController.consumeGuardReset`、`SafetyGuard.kt` |
 | 9 | 键 `greeze_ctl_safe_mode_v1` | App 写 `"1"`，hook 侧 `consumeSafeModeRequest` 在拿到 Context 后消费：latch `persist.sys.hypergreeze.safe=1` 并清标记，**下一次开机**生效 | `ModuleController.kt` `consumeSafeModeRequest` |
 | 10 | 广播 `ACTION_STATE_CHANGED` | 无发送、无注册（设计上就是轮询，见 §6） | `core/Keys.kt` |
 | 11 | `HookState.DISABLED` / `SKIPPED` | 常量存在，无写入点 | `core/State.kt` |

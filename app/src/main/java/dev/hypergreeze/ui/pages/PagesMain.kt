@@ -334,7 +334,7 @@ fun EventsPage(
     }
     val labels = listOf("全部", "冻结", "跳过", "错误")
 
-    PageScaffold(title = "事件", subtitle = "最近 ${state.events.size} 条 · 重启后重置") {
+    PageScaffold(title = "事件", subtitle = "最近 ${state.events.size} 条 · 上限 60（compactEvents 时 20）") {
         item(key = "filters") {
             Block {
                 Gap(4)

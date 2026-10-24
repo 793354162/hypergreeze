@@ -45,7 +45,7 @@ HyperOS 的 GreeZe 把「冻结 / 解冻 / 名单 / 资源限制 / 状态查询�
 ```bash
 adb shell settings delete system greeze_ctl_policy_v1      # 清空策略 -> 纯跟随系统
 adb shell settings put system greeze_ctl_safe_mode_v1 1    # 请求安全模式（下次开机不挂钩子）
-adb shell settings delete system greeze_ctl_boot_guard_v1  # 清启动守卫计数
+adb shell settings put system greeze_ctl_boot_guard_v1 0   # 清启动守卫计数（重启后生效）
 # 终极手段：LSPosed 里取消「系统框架」作用域后重启
 ```
 

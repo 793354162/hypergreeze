@@ -2,6 +2,16 @@
 
 所有改动按「为什么」而不是「改了什么文件」记录。
 
+## [1.0.1] — 2026-10-25
+
+* **`processes`（子进程例外）真正接线**：新增 `freeze-process` hook，从 `RunningProcess` 反射读 uid / processName，命中进程级 `NEVER` 时不 `proceed()`。此前该字段只存不用。
+* **`freeze-uids` 批量路径**：新增 hook，把 `NEVER` 的 uid 从数组里滤掉（全被滤掉时直接返回空列表，不调 `proceed`）。此前批量冻结可以绕过单 uid 拦截。
+* **全局开关接线**：`patchLists` / `compactEvents` / `applyFreezeBinder` 现在在策略加载与每次 revision 变化时执行（`applyGlobalSideEffects`）；此前三者只存不用。
+* **事件补发射点**：`THAW`（三个解冻命令）与 `BOOT`（拿到 Context 后一条）；`BLOCK` / `ERROR` 仍无写入点（异常只进计数与日志）。
+* **守卫清零可用 Settings 请求**：`settings put system greeze_ctl_boot_guard_v1 0` 会被 hook 消费（此前是死键，README 的逃生命令无效）。
+* **事件页文案修正**：事件环是持久化的（`loadExistingEvents`），不会因重启清空；重启丢的是内存日志环。
+* 事件落盘节流：tick 5s，心跳 30s，`flushEvents` 由 dirty 标志守卫。
+
 ## [1.0.0] — 2026-10-25
 
 第一版：把可行性分析里的「影子式 MVP」和「强制式」两条路径都实现了，UI 按 Miuix 重画。
@@ -11,7 +21,7 @@
 * **逐 App 四态**（跟随系统 / 永不冻结 / 立即冻结 / 自定义）。`FOLLOW` 是唯一默认值，任何未配置的 App 都不会被动到。
 * **32 位场景掩码**：`keep` 强制豁免、`drop` 强制不豁免，`LOCKED_DROP`（AUDIO/CAMERA/TOP/IME/VISIBLE/VIBRATOR）在解码阶段就会被清位，手改 JSON 也绕不过。
 * **退后台立即冻结**：带 `delayMs` 与 `cooldownMs`，同一 uid 任务去重，冻结前查 `isUidFrozen`。
-* **子进程覆盖**：按完整进程名（`pkg:sub`）登记 NEVER/IMMEDIATE。
+* **子进程覆盖**：按完整进程名（`pkg:sub`）登记进程级 `NEVER`；只有 `freezeProcess(RunningProcess,…)` 这条路径带进程名，所以子进程 `IMMEDIATE` 与子进程掩码覆盖不生效（见 `docs/LIMITS.md`）。
 * **资源联动**：net / job / wakelock 三项走已确证的 setter；alarm / broadcast / cpu 只有开关位，没有可靠落点，UI 上标注而未接线。
 * **解冻条件**：`needThawWhenScreenOn` 被 hook；`externalWake` 接到 `isAllowWakeUpList`；其余（netChange/notification/audioFocus/charging）目前只存策略，需要在真机上确认消费点后再接。
 * **事件审计**：`freezeUid` 的真实返回串、跳过原因、命令回执都进环形缓冲。
