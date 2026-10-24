@@ -219,7 +219,7 @@ fun AppDetailPage(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     AppIcon(pkg, 40.dp)
                     Spacer(Modifier.width(10.dp))
-                    MiuixBadge(text = app.mode.label, color = modeColorOf(app.mode, colors))
+                    MiuixBadge(text = app.mode.label, color = modeColor(app.mode, colors))
                 }
             },
         ) {
