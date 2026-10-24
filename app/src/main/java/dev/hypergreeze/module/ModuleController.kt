@@ -224,7 +224,7 @@ class ModuleController(
             telemetry?.flushEvents()
             telemetry?.flushLogs()
         }
-        if (tickCount % HEARTBEAT_EVERY_TICKS == 0) publishHeartbeat()
+        if (tickCount % HEARTBEAT_EVERY_TICKS == 0L) publishHeartbeat()
     }
 
     private fun publishHeartbeat() {

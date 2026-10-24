@@ -2,6 +2,7 @@
 
 > 本文是 `Settings.System` 通道的唯一契约文档。键名、字段名、取值、默认值、上限逐条对照代码，行内标注 `文件:行`。
 > 代码里没有的东西，本文一律留空；代码与本文冲突时以代码为准，并请同步改本文。
+> 锚点写成 `文件:行`，且每条都同时给出符号名（方法/字段/键）；代码改动导致行号漂移时，以符号名为准。
 >
 > 基线：`PolicyCodec.VERSION = 2`（`core/PolicyCodec.kt:14`）、模块 `versionName 1.0.0` / `versionCode 1`（`app/build.gradle.kts:24-25`）、libxposed **api 102**（`module/HyperGreezeModule.kt:11`，`META-INF/xposed/module.prop`）。
 
@@ -36,7 +37,7 @@
 |---|---|---|---|
 | **`Settings.System` JSON 键** | 推荐。App 侧需 `WRITE_SETTINGS`；`system_server` 直接读；无 SELinux 问题；跨重启持久；可被 `ContentObserver` 监听；天然按用户分库 | **采用，单通道双文档**（App→hook 写 `policy`/`command`，hook→App 写 `heartbeat`/`events`/`logs`） | App 必须拿到 appop `WRITE_SETTINGS`，否则写入被拒（`ui/data/Repos.kt:48-55` 显式返回 `false`，UI 报错而不假装保存） |
 | `XSharedPreferences` + `xposedsharedprefs` meta-data | 只读语义为主、写回不实时，适合当 boot 期初值 | 不用 | 两个独立原因：①本模块要「UI 改完秒级生效 + 回读心跳」的双向语义，prefs 是 key-value 增量、不是整份文档；②新 API 下它属 legacy 路径（既有定论见 `ARCHITECTURE.md` §2） |
-| 广播（hook → UI 回写） | 适合事件推送，不适合大数据 | 只留常量 `Keys.ACTION_STATE_CHANGED`（`core/Keys.kt:36`），**当前代码没有发送方也没有接收方** | 快路径实际由 `ContentObserver` + 5 s tick 轮询承担（`ModuleController.kt:149-171, 191-210`） |
+| 广播（hook → UI 回写） | 适合事件推送，不适合大数据 | 只留常量 `Keys.ACTION_STATE_CHANGED`（`core/Keys.kt:36`），**当前代码没有发送方也没有接收方** | 快路径实际由 `ContentObserver` + 5 s tick 轮询承担（`ModuleController.kt:165-187, 191-228`） |
 | Unix abstract socket / 文件 | `system_server` 连 App socket 常被 SELinux 拦；App 写 `/data/system/` 走不通 | 不用 | 一旦被 SELinux 拦就是整条通道静默失效，没有可观测的失败信号 |
 
 ### 1.2 采用 `Settings.System` 的五个具体理由
@@ -60,7 +61,7 @@
 
 | 文档 | 写入时机 | 节流 |
 |---|---|---|
-| `heartbeat` | Context 就绪、启动后 90 s 稳定窗口、每 6 个 tick（约 30 s）、每条命令执行后、策略 revision 变化 | `HEARTBEAT_MIN_INTERVAL_MS = 5000`（`ModuleTelemetry.kt:157`）；但 `ModuleController.publishHeartbeat()` 恒传 `force = true`（`ModuleController.kt:240`），实际按上述时机全量写 |
+| `heartbeat` | Context 就绪、启动后 90 s 稳定窗口、每 6 个 tick（约 30 s）、每条命令执行后、策略 revision 变化 | `HEARTBEAT_MIN_INTERVAL_MS = 5000`（`ModuleTelemetry.kt:157`）；但 `ModuleController.publishHeartbeat()` 恒传 `force = true`（`ModuleController.kt:255`），实际按上述时机全量写 |
 | `events` | `record()` 只标脏；`flushEvents()` 才落盘 | 仅脏时写（`ModuleTelemetry.kt:92-99`）；`forcedFreeze` 与 `processCommand` 主动 flush |
 | `logs` | tick 内 `flushLogs()` | `LOG_FLUSH_INTERVAL_MS = 15000`（`ModuleTelemetry.kt:158`） |
 
@@ -84,12 +85,12 @@
 |---|---|---|---|---|---|
 | `greeze_ctl_command_v1` | **App**（`SettingsGateway.sendCommand`，`ui/data/Repos.kt:67`） | JSON object（字符串） | 一次性命令，见 §5 | 单对象；执行后**不清键**（靠 `seq` 水位去重），永远只会存在一条 | `{"seq":1761692400123,"op":"thawAll"}` |
 
-- 读取方：hook（`ModuleController.processCommand`，`ModuleController.kt:242-264`），两条触发路径：`ContentObserver`（注册 `descendant = false`，`ModuleController.kt:157-162`）与每个 tick（5 s）里的 `processCommand()`。
+- 读取方：hook（`ModuleController.processCommand`，`ModuleController.kt:260-282`），两条触发路径：`ContentObserver`（注册 `descendant = false`，`ModuleController.kt:173-178`）与每个 tick（5 s）里的 `processCommand()`。
 - 与 `policy` 共用一个 observer 回调，但注册成两条 URI：
 
 ```text
-registerContentObserver(Settings.System.getUriFor(Keys.COMMAND), false, observer)   // ModuleController.kt:158-162
-registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer)   // ModuleController.kt:163-167
+registerContentObserver(Settings.System.getUriFor(Keys.COMMAND), false, observer)   // ModuleController.kt:173-178
+registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer)   // ModuleController.kt:178-183
 ```
 
 ### 2.3 `greeze_ctl_heartbeat_v1`
@@ -148,7 +149,7 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 | `v` | int | `2`（解码缺省 `PolicyCodec.VERSION`，`PolicyCodec.kt:35`） | 任意 int | 信息性。解码不做版本门禁，`v` 写几都照常解析；编码回写的是 `policy.version` |
 | `rev` | long | `0` | ≥0 | 信息性 + 心跳展示（`Heartbeat.revision`）；`Policy.withApp/withGlobal` 每次编辑 `+1`（`core/Policy.kt:18-31`） |
 | `ts` | long | `0` | epoch ms | 信息性，编辑时置 `System.currentTimeMillis()` |
-| `global` | object | `GlobalPolicy()` | 见 §3.2 | 缺省即默认值；`enabled = false` 时全部 hook 变成直通（`PolicyEngine.kt:18,67`） |
+| `global` | object | `GlobalPolicy()` | 见 §3.2 | 缺省即默认值；`enabled = false` 时全部 hook 变成直通（`PolicyEngine.kt:18`） |
 | `apps` | object | `{}` | `包名 → app 对象` | 条目的 `isEffective == false` 时，解码阶段被**丢弃**（`PolicyCodec.kt:53-54`），即 `{"mode":"follow"}` 这种空壳不会驻留 |
 
 ### 3.2 `global`
@@ -196,7 +197,7 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 | 字段 | 类型 | 默认值 | 取值 | 消费点（代码） |
 |---|---|---|---|---|
 | `screenOn` | bool? | `null` | `true`/`false`/缺省 | `needThawWhenScreenOn(int)` hook 返回它（`HookInstaller.kt:357-372`） |
-| `externalWake` | bool? | `null` | 同上 | `isAllowWakeUpList(String)` hook 返回它（`PolicyEngine.wakeUpVerdict`，`PolicyEngine.kt:94-99`） |
+| `externalWake` | bool? | `null` | 同上 | `isAllowWakeUpList(String)` hook 返回它（`PolicyEngine.wakeUpVerdict`，`PolicyEngine.kt:101-107`） |
 | `netChange` | bool? | `null` | 同上 | **仅存储**（§11） |
 | `notification` | bool? | `null` | 同上 | **仅存储**（§11） |
 | `audioFocus` | bool? | `null` | 同上 | **仅存储**（§11） |
@@ -283,7 +284,7 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 
 `keep` = **强制豁免** → `AurogonFilterManager.filter()` 返回 `false`；`drop` = **强制不豁免** → 返回 `true`。两者都不命中的位交回给系统原值。
 
-### 4.2 `filterVerdict` 决策表（`PolicyEngine.kt:61-79`）
+### 4.2 `filterVerdict` 决策表（`PolicyEngine.kt:61-87`）
 
 | # | 条件 | 返回 | 对冻结的影响 |
 |---|---|---|---|
@@ -297,7 +298,7 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 
 > `keep` 先于 `drop` 判定：同一位同时出现在两个掩码里时 `keep` 赢。UI 的 `toggleKeepBit` / `toggleDropBit` 已保证互斥（`ui/vm/MainViewModel.kt:153-175`）。
 >
-> **极性逃生阀**：第 5/6 行的返回值是「模块覆写」。`global.filterPolarityInverted = true` 时，覆写整体取反（`PolicyEngine.kt:78-83`）：
+> **极性逃生阀**：第 5/6 行的返回值是「模块覆写」。`global.filterPolarityInverted = true` 时，覆写整体取反（`PolicyEngine.kt:78-84`）：
 > `override == null → original`；`filterPolarityInverted → !override`；否则 `override`。
 > 也就是说 `keep` 位在反向 ROM 上会表现为「允许冻结」，`drop` 位表现为「强制豁免」，而**系统自己的 `original` 永不被改动**。诊断页「反射 filter 极性反转」开关就是给这一个假设准备的。
 
@@ -305,8 +306,8 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 
 | hook | 目标方法 | 判定函数 | 规则 |
 |---|---|---|---|
-| `no-restrict` / `temp-white` | `isNoRestrictApp` / `isTempWhite` | `whitelistVerdict`（`PolicyEngine.kt:82-91`） | `never` → `true`；`immediate`/`custom` 且 `drop` 含 `NO_RESTRICT` → `false`；其余 `original` |
-| `wakeup-list` | `isAllowWakeUpList` | `wakeUpVerdict`（`PolicyEngine.kt:94-99`） | `mode == follow` → `original`；其余 → `thawOn.externalWake ?: original` |
+| `no-restrict` / `temp-white` | `isNoRestrictApp` / `isTempWhite` | `whitelistVerdict`（`PolicyEngine.kt:89-98`） | `never` → `true`；`immediate`/`custom` 且 `drop` 含 `NO_RESTRICT` → `false`；其余 `original` |
+| `wakeup-list` | `isAllowWakeUpList` | `wakeUpVerdict`（`PolicyEngine.kt:101-107`） | `mode == follow` → `original`；其余 → `thawOn.externalWake ?: original` |
 
 ### 4.4 `LOCKED_DROP`：解码期强制清位
 
@@ -394,10 +395,10 @@ UI 上这些位的三态选择器带 `locked = true`（`ui/pages/PagesApps.kt:42
 |---|---|---|
 | UI 生成 | `seq = System.currentTimeMillis()` | `ui/data/Repos.kt:87`；`MainViewModel.send` 调用（`MainViewModel.kt:224`） |
 | hook 初始水位 | `lastCommandSeq = 0` | `ModuleController.kt:59` |
-| 重启后恢复 | Context 就绪时读 `heartbeat.lastSeq`，`lastCommandSeq = max(旧值, 心跳值)` | `ModuleController.kt:132-137` |
-| 执行门 | `if (command.seq <= lastCommandSeq) return` | `ModuleController.kt:246` |
-| 消费 | 执行前就把 `lastCommandSeq = command.seq`（失败也算已消费） | `ModuleController.kt:247` |
-| 回写 | 每个命令执行后 `publishHeartbeat()`，把新水位写进心跳 | `ModuleController.kt:263` |
+| 重启后恢复 | Context 就绪时读 `heartbeat.lastSeq`，`lastCommandSeq = max(旧值, 心跳值)` | `ModuleController.kt:132-139` |
+| 执行门 | `if (command.seq <= lastCommandSeq) return` | `ModuleController.kt:264` |
+| 消费 | 执行前就把 `lastCommandSeq = command.seq`（失败也算已消费） | `ModuleController.kt:265` |
+| 回写 | 每个命令执行后 `publishHeartbeat()`，把新水位写进心跳 | `ModuleController.kt:281` |
 | 去重后遗症 | 命令键**从不删除**；同 `seq` 重复写等于空操作 | — |
 
 **重启不回放的成立条件**：心跳键还在。若有人 `settings delete system greeze_ctl_heartbeat_v1`（或首次安装从未写过），水位回到 0，此时 Settings 里残留的任何命令（`seq` 是 epoch 毫秒，必然 > 0）会被**执行一次**。
@@ -411,7 +412,7 @@ UI 上这些位的三态选择器带 `locked = true`（`ui/pages/PagesApps.kt:42
 | 3 | `freezeUid` | `OP_FREEZE_UID` | `uid` | `facade.freezeUid(uid, 0, 1000, "hypergreeze", 0)` | GreeZe 自己的返回串（如 `OK`） | `fail`（反射返回 `null` 时） |
 | 4 | `freezePkg` | `OP_FREEZE_PKG` | `pkg` | `pm.getPackageUid(pkg, 0)` → 同 #3 | 同 #3 | `no-uid`（查不到 uid / 无 Context）或 `fail` |
 | 5 | `quickMode` | `OP_QUICK_MODE` | `arg`（缺省 `quick_freeze`）、可选 `uid` | `facade.triggerQuickFreezeMode(mode, uid, "hypergreeze")` | `ok` | `fail` |
-| 6 | `resetCgroup` | `OP_RESET_CGROUP` | 无 | **与 #1 同一分支**：`facade.thawAll()`（`ModuleController.kt:269-270`） | `ok` | `fail` |
+| 6 | `resetCgroup` | `OP_RESET_CGROUP` | 无 | **与 #1 同一分支**：`facade.thawAll()`（`ModuleController.kt:287-288`） | `ok` | `fail` |
 | 7 | `clearEvents` | `OP_CLEAR_EVENTS` | 无 | `telemetry.clearEvents()` → 内存环清空 + 写 `"[]"` | `ok`（无条件） | — |
 | 8 | `clearSafeMode` | `OP_CLEAR_SAFE_MODE` | 无 | `guard.clearSafeMode()` + `installer.passive = false` | `ok`（无条件） | — |
 | 9 | `applyLists` | `OP_APPLY_LISTS` | 无 | `patchListField("mNoRestrictAppSet", never)` + `patchListField("mGrabTicketsAppList", immediate)` | `ok(never=<N>,immediate=<M>)` | `fail`（两个字段都没打上）或 `no-policy`（引擎未就绪） |
@@ -422,13 +423,13 @@ UI 上这些位的三态选择器带 `locked = true`（`ui/pages/PagesApps.kt:42
 | 串 | 产生点 | 含义 |
 |---|---|---|
 | `fail` | 各 op 的布尔/字符串判定 | 反射调用没落地，或 GreeZe 返回 `null`/`false` |
-| `no-uid` | #4 | `pkg` 为空、无 Context、或 `getPackageUid` 抛异常（`ModuleController.kt:325-333`） |
+| `no-uid` | #4 | `pkg` 为空、无 Context、或 `getPackageUid` 抛异常（`ModuleController.kt:343-352`） |
 | `no-greeze` | `execute()` 开头 | GreeZe 门面尚未建立（`facade == null`，通常意味着探测阶段就没找到类） |
 | `no-policy` | #9 | `store?.engine` 为空，即策略尚未加载 |
 | `unknown-op` | `execute()` 的 `else` 分支 | 防御性分支；`decode` 已把未知 op 整条丢弃，正常路径到不了这里 |
-| `error: <SimpleClassName>` | `processCommand` 的 catch | 执行期异常，只记类名（`ModuleController.kt:248-253`） |
+| `error: <SimpleClassName>` | `processCommand` 的 catch | 执行期异常，只记类名（`ModuleController.kt:266-272`） |
 
-每条命令无论成败都会写一条 `info` 事件：`result = 返回串`、`detail = "cmd:<op>"`，并立即 `flushEvents()` + 刷新心跳（`ModuleController.kt:254-263`）。
+每条命令无论成败都会写一条 `info` 事件：`result = 返回串`、`detail = "cmd:<op>"`，并立即 `flushEvents()` + 刷新心跳（`ModuleController.kt:273-282`）。
 
 ### 5.5 UI 侧的快捷入口（`MainViewModel.kt:240-266`）
 
@@ -458,9 +459,9 @@ UI 上这些位的三态选择器带 `locked = true`（`ui/pages/PagesApps.kt:42
 | `fw` | `frameworkName` | string | `""` | LSPosed 框架名 |
 | `fwV` | `frameworkVersion` | string | `""` | 框架版本 |
 | `fwProps` | `frameworkProperties` | long | `0` | 框架位属性 |
-| `proc` | `processName` | string | `""` | 控制器硬编码 `"system_server"`（`ModuleController.kt:223`） |
+| `proc` | `processName` | string | `""` | 控制器硬编码 `"system_server"`（`ModuleController.kt:241`） |
 | `build` | `buildFingerprint` | string | `""` | `Build.FINGERPRINT` |
-| `greeze` | `greezePresent` | bool | `false` | 进入 `start()` 且有 `GreezeRefs` 时为 `true`（硬编码 `true`，`ModuleController.kt:225`） |
+| `greeze` | `greezePresent` | bool | `false` | 进入 `start()` 且有 `GreezeRefs` 时为 `true`（硬编码 `true`，`ModuleController.kt:243`） |
 | `greezeClass` | `greezeClass` | string? | 缺省 | 探测到的 manager 类名，如 `com.miui.server.greeze.GreezeManagerService` |
 | `instance` | `instanceOk` | bool | `false` | `facade.hasInstance`：`sInstance` / `ServiceManager("greeze")` / `getService()` / 静态字段任一命中 |
 | `enabled` | `policyEnabled` | bool | `false` | `PolicyEngine.enabled` |
@@ -533,8 +534,8 @@ ensureContext() 成功                      → publishHeartbeat()
 
 | 项 | 值 | 出处 |
 |---|---|---|
-| tick 周期 | `TICK_MS = 5_000` | `ModuleController.kt:369-370` |
-| 心跳节流 | 每 `HEARTBEAT_EVERY_TICKS = 6` 个 tick 一次，即约 30 s | `ModuleController.kt:370`、`tick()` 里的 `tickCount % HEARTBEAT_EVERY_TICKS == 0` |
+| tick 周期 | `TICK_MS = 5_000` | `ModuleController.kt:370` |
+| 心跳节流 | 每 `HEARTBEAT_EVERY_TICKS = 6` 个 tick 一次，即约 30 s | `ModuleController.kt:371`、`tick()` 里的 `tickCount % HEARTBEAT_EVERY_TICKS == 0` |
 | 策略重读 | **每个** tick 都调 `PolicyStore.reload()`（5 s 兜底） | `ModuleController.tick()` |
 | 事件/日志 flush | 每个 tick 都投递，但各自有 dirty 判断与 15 s 节流 | `ModuleTelemetry.kt:92-99, 112-117` |
 
@@ -681,7 +682,7 @@ done
 | 半应用 | 不存在：`decode()` 返回一个新 `Policy` 实例，`PolicyStore` 整体替换（`PolicyStore.kt:73-77`） | 同上 |
 | `null` / 空串 | 直接 `Policy.EMPTY` | `PolicyCodec.kt:31` |
 | 心跳/事件/日志解码失败 | 分别返回 `null` / `emptyList()` / `emptyList()`，UI 显示「无数据」而非崩溃 | `TelemetryCodec.kt:100-102, 138-140, 156-157` |
-| 命令解码失败 | 返回 `null`，命令被忽略且水位**不前进**（下次仍会重试同一条）；未知 op 同样整条丢弃 | `Command.kt:48-64`、`ModuleController.kt:245-247` |
+| 命令解码失败 | 返回 `null`，命令被忽略且水位**不前进**（下次仍会重试同一条）；未知 op 同样整条丢弃 | `Command.kt:48-64`、`ModuleController.kt:262-265` |
 
 `Policy.EMPTY` 的具体含义：`version = 2`、`revision = 0`、`updatedAt = 0`、`global = GlobalPolicy()`（`enabled=true` 等默认值）、`apps = {}`（`core/Policy.kt:36`）。也就是「所有 App 跟随系统，模块不可见」。
 
@@ -694,12 +695,12 @@ done
 | # | 项 | 事实 | 出处 |
 |---|---|---|---|
 | 1 | `apps[].processes` | 只参与 `isEffective` 与 UI 展示；所有 hook 调用点都**不传入进程名**（`engine.neverFreeze(pkg)`、`engine.forceFreezeOnBackground(pkg)`、`filterVerdict(pkg, reason, original)`），所以进程级覆盖不影响任何判定 | `HookInstaller.kt:294, 379, 392`、`PolicyEngine.kt:25-28` |
-| 2 | `global.patchLists` | 无读取方；`applyLists` 命令不看它，只要有 never/immediate 就打字段 | `ModuleController.kt:314-323` |
+| 2 | `global.patchLists` | 无读取方；`applyLists` 命令不看它，只要有 never/immediate 就打字段 | `ModuleController.kt:332-341` |
 | 3 | `global.compactEvents` | 无读取方 | `core/GlobalPolicy.kt:24` |
-| 4 | `global.applyFreezeBinder` | 无读取方；改云开关只走 `setFreezeBinder` 命令 | `GlobalPolicy.kt:22`、`ModuleController.kt:303-306` |
+| 4 | `global.applyFreezeBinder` | 无读取方；改云开关只走 `setFreezeBinder` 命令 | `GlobalPolicy.kt:22`、`ModuleController.kt:321-324` |
 | 5 | `resources.alarm/broadcast/cpu` | 无 setter 调用（只有 `net` / `job` / `wakelock` 三项落地） | `HookInstaller.kt:420-428` |
 | 6 | `thawOn.netChange/notification/audioFocus/charging` | 无 hook 消费 | `HookInstaller.kt` 全文 |
-| 7 | `resetCgroup` op | 实现等同 `thawAll`，没有调 `resetCgroupUidStatus` / `resetCgroupUidFreezeStatus` | `ModuleController.kt:269-270` |
+| 7 | `resetCgroup` op | 实现等同 `thawAll`，没有调 `resetCgroupUidStatus` / `resetCgroupUidFreezeStatus` | `ModuleController.kt:287-288` |
 | 8 | 键 `greeze_ctl_boot_guard_v1` | 只在 `Keys.ALL` 里出现，无读写方；守卫真值在 `persist.sys.hypergreeze.guard` | `core/Keys.kt:24, 38-40` |
 | 9 | 键 `greeze_ctl_safe_mode_v1` | App 会写 `"1"`，hook 侧没有读取方；生效路径是属性 `persist.sys.hypergreeze.safe` | `Repos.kt:69-72`、`SafetyGuard.kt:40` |
 | 10 | 广播 `ACTION_STATE_CHANGED` | 无发送、无注册 | `core/Keys.kt:36` |
