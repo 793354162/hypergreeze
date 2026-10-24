@@ -1,4 +1,4 @@
-﻿package dev.hypergreeze.module
+package dev.hypergreeze.module
 
 import android.os.SystemClock
 import dev.hypergreeze.core.EventType
