@@ -1,0 +1,89 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8"
+
+jobs:
+  assemble:
+    name: assemble (release + debug)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK platform 35 + build-tools
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools" > /dev/null
+
+      - name: Verify vendored Xposed API 102 jar against Maven Central
+        run: |
+          set -eu
+          curl -fsSL -o "$RUNNER_TEMP/api.aar" \
+            https://repo1.maven.org/maven2/io/github/libxposed/api/102.0.0/api-102.0.0.aar
+          unzip -o -q "$RUNNER_TEMP/api.aar" classes.jar -d "$RUNNER_TEMP/apix"
+          upstream=$(sha256sum "$RUNNER_TEMP/apix/classes.jar" | cut -d' ' -f1)
+          vendored=$(sha256sum libs/libxposed-api-102.jar | cut -d' ' -f1)
+          echo "upstream=$upstream"
+          echo "vendored=$vendored"
+          test "$upstream" = "$vendored"
+          echo "OK: libs/libxposed-api-102.jar == io.github.libxposed:api:102.0.0 classes.jar"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble
+        run: ./gradlew :app:assembleRelease :app:assembleDebug --stacktrace
+
+      - name: Report signing certificate
+        run: |
+          set -eu
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          echo "apk=$APK"
+          "$ANDROID_HOME"/build-tools/35.0.0/apksigner verify --print-certs "$APK" | tee signing.txt
+          echo "--- package meta ---"
+          "$ANDROID_HOME"/build-tools/35.0.0/aapt2 dump badging "$APK" | head -5
+          echo "--- xposed entries in apk ---"
+          unzip -l "$APK" | grep -E "META-INF/xposed/" || (echo "MISSING META-INF/xposed/" && exit 1)
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: hypergreeze-apk
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
+            signing.txt
+          if-no-files-found: error
+
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/*.apk
+          generate_release_notes: true

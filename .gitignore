@@ -1,0 +1,21 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+captures/
+*.hprof
+*.log
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+
+# local analysis scratch (bytecode probes, not part of the module)
+.probe/
+
+# Never ignore the fixed signing material: reproducible signature is a feature.
+!keystore/hypergreeze.jks
+!keystore/keystore.properties

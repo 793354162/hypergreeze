@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HyperGreeze</string>
+    <string name="module_description">逐 App 精确控制 HyperOS GreeZe 冻结：四态策略 / 32 位场景掩码 / 子进程 / 资源联动 / 事件审计。仅作用于系统框架。</string>
+</resources>
