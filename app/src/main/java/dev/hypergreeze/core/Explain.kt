@@ -54,6 +54,7 @@ object Explain {
             FreezeMode.IMMEDIATE -> lines.add("会冻结：退到后台开始计时，到点由模块主动冻结")
             FreezeMode.CUSTOM -> lines.add("会冻结：只认下面打开的位与开关，不继承默认")
         }
+        val baseLines = lines.size
 
         val delay = if (app.delayMs > 0L) app.delayMs else global.defaultDelayMs
         val cooldown = app.thawCooldownMs
@@ -110,20 +111,26 @@ object Explain {
         }
 
         // Resource follow-ups and thaw conditions.
-        val resOn = ResourceSwitches.ORDER.map { it.first }.filter { resourceValue(app.resources, it) == true }
-        val resOff = ResourceSwitches.ORDER.map { it.first }.filter { resourceValue(app.resources, it) == false }
+        val resKeys = ResourceSwitches.ORDER.map { it.first }
+        val resOn = resKeys.filter { resourceValue(app.resources, it) == true }
+        val resOff = resKeys.filter { resourceValue(app.resources, it) == false }
         if (resOn.isNotEmpty()) {
             lines.add("冻结时额外限制：${resOn.joinToString("、") { resourceNoun(it) }}")
         } else if (resOff.isNotEmpty()) {
             lines.add("只冻进程，不动${resOff.joinToString("、") { resourceNoun(it) }}")
         }
 
-        val thawOn = ThawTriggers.ORDER.map { it.first }.filter { thawValue(app.thawOn, it) == true }
-        val thawOff = ThawTriggers.ORDER.map { it.first }.filter { thawValue(app.thawOn, it) == false }
+        val thawKeys = ThawTriggers.ORDER.map { it.first }
+        val thawOn = thawKeys.filter { thawValue(app.thawOn, it) == true }
+        val thawOff = thawKeys.filter { thawValue(app.thawOn, it) == false }
         if (thawOn.isNotEmpty()) {
             lines.add("${thawOn.joinToString("、") { thawNoun(it) }}会解冻它")
         } else if (thawOff.isNotEmpty()) {
             lines.add("${thawOff.joinToString("、") { thawNoun(it) }}也不解冻")
+        }
+
+        if (lines.size == baseLines && app.mode == FreezeMode.CUSTOM) {
+            lines.add("还没打开任何位，等于不改动它")
         }
 
         return cap(lines)
@@ -144,7 +151,7 @@ object Explain {
             } else {
                 "（另有 ${policy.apps.size} 条记录仍跟随系统）"
             }
-            return "${head}当前没有任何应用被改动，模块对系统无影响$tail"
+            return "${head}当前没有任何应用被改动，模块对系统无影响${tail}"
         }
 
         val parts = ArrayList<String>(4)

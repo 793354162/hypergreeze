@@ -123,6 +123,13 @@ class ExplainTest {
     }
 
     @Test
+    fun `bare custom app admits it changes nothing`() {
+        val lines = Explain.appLines("com.bare", AppPolicy(mode = FreezeMode.CUSTOM), followGlobal)
+        assertEquals(2, lines.size)
+        assertTrue(lines.joinToString(" | "), lines.any { it.contains("不改动") })
+    }
+
+    @Test
     fun `full config stays within six short lines`() {
         val app = AppPolicy(
             mode = FreezeMode.CUSTOM,

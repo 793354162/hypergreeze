@@ -85,13 +85,16 @@ data class JournalEntry(
      *
      * 时间按本地时区取 `HH:mm:ss`；`ts` 还是 0（还没经过 [JournalRing.add]）时显示 `--:--:--`，
      * 好让「没打时间戳」这件事一眼可见，而不是伪装成 08:00:00。
+     *
+     * `uid` 只在 [target] 里还没写过同一个 uid 时才补：调用方有的地方把 uid 塞进 target
+     * （`"com.x (u10123)"`）、有的地方只填 [uid] 字段，两种都用时不能出现 `(u10123) (u10123)`。
      */
     val oneLine: String
         get() = buildString {
             append(clock(ts))
             append(' ').append(op.label)
             if (target.isNotBlank()) append(' ').append(target)
-            if (uid != 0) append(" (u").append(uid).append(')')
+            if (uid != 0 && !target.endsWith("(u$uid)")) append(" (u").append(uid).append(')')
             if (after != null) append(' ').append(before ?: "?").append('→').append(after)
             append(if (ok) " ok" else " fail")
             if (!note.isNullOrBlank()) append(" — ").append(note)

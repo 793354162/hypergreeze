@@ -88,7 +88,7 @@ class JournalTest {
         assertTrue(JournalCodec.decode("{not json").isEmpty())
         assertTrue(JournalCodec.decode("{}").isEmpty())
         assertTrue(JournalCodec.decode("\"just a string\"").isEmpty())
-        assertTrue(JournalCodec.decode("\"\"\"").isEmpty())
+        assertTrue(JournalCodec.decode("[null,null]").isEmpty())
         assertTrue(JournalCodec.decode("[]").isEmpty())
         assertTrue(JournalCodec.decode("[1,2,3]").isEmpty())
         assertTrue(JournalCodec.decode("null").isEmpty())
@@ -287,5 +287,10 @@ class JournalTest {
 
         val noted = JournalEntry(op = EffectOp.LIST_PATCH, target = "set", note = "全量写入")
         assertTrue(noted.oneLine.endsWith("— 全量写入"))
+
+        // target 里已经带了同一个 uid 时不再重复补，两种写法混用不能读成 "(u10123) (u10123)"
+        val dedup = JournalEntry(op = EffectOp.NET_RESTRICT, target = "com.x (u10123)", uid = 10123)
+        assertTrue(dedup.oneLine.contains("com.x (u10123)"))
+        assertFalse(dedup.oneLine.contains("(u10123) (u10123)"))
     }
 }

@@ -305,6 +305,10 @@ class GreezeFacade(val refs: GreezeRefs) {
     fun isJobRestrict(uid: Int): Boolean? =
         if (refs.m("isJobRestrict") == null) null else R.asBool(call("isJobRestrict", uid))
 
+    /** Used by the ledger to record the *previous* value before `updateWakeLockLimit` overwrites it. */
+    fun isWakeLockLimit(uid: Int): Boolean? =
+        if (refs.m("isWakeLockLimit") == null) null else R.asBool(call("isWakeLockLimit", uid))
+
     /** `jobRestrict(int)` returns void on this ROM — success means "the call landed". */
     fun setJobRestrict(uid: Int): Boolean = callUnit("jobRestrict", uid)
 
