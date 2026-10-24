@@ -11,8 +11,10 @@ import dev.hypergreeze.core.FreezeMode
 import dev.hypergreeze.core.FreezeState
 import dev.hypergreeze.core.GlobalPolicy
 import dev.hypergreeze.core.Heartbeat
+import dev.hypergreeze.core.Keys
 import dev.hypergreeze.core.Policy
 import dev.hypergreeze.core.SceneBit
+import dev.hypergreeze.core.TelemetryCodec
 import dev.hypergreeze.ui.data.AppEntry
 import dev.hypergreeze.ui.data.AppInventory
 import dev.hypergreeze.ui.data.SettingsGateway
@@ -59,6 +61,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
     private var pollJob: Job? = null
+    private var lastEventsRaw: String? = null
+    private var lastLogsRaw: String? = null
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -95,8 +99,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun refreshTelemetry() {
         val hb = gateway.readHeartbeat()
-        val events = gateway.readEvents()
-        val logs = gateway.readLogs()
+        // Compare the raw strings first: decoding 60 events + 120 log lines every 2.5s on the main
+        // thread is wasted work when nothing changed (which is the normal case).
+        val eventsRaw = gateway.readRaw(Keys.EVENTS)
+        val logsRaw = gateway.readRaw(Keys.LOGS)
+        val current = _state.value
+        val events = if (eventsRaw == lastEventsRaw) {
+            current.events
+        } else {
+            TelemetryCodec.decodeEvents(eventsRaw).asReversed()
+        }
+        val logs = if (logsRaw == lastLogsRaw) {
+            current.logs
+        } else {
+            TelemetryCodec.decodeLogs(logsRaw)
+        }
+        lastEventsRaw = eventsRaw
+        lastLogsRaw = logsRaw
         val age = hb?.ts?.takeIf { it > 0 }?.let { System.currentTimeMillis() - it } ?: Long.MAX_VALUE
         _state.update {
             it.copy(
@@ -104,7 +123,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 events = events,
                 logs = logs,
                 heartbeatAgeMs = age,
-                frozenKnown = hb?.hooks?.sumOf { hook -> hook.hits }?.toInt() ?: 0,
             )
         }
     }

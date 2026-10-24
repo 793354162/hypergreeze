@@ -158,6 +158,7 @@ object PolicyCodec {
         .put("patchLists", value.patchLists)
         .put("compactEvents", value.compactEvents)
         .put("filterPolarityInverted", value.filterPolarityInverted)
+        .put("uiExpert", value.uiExpert)
         .putOpt("defaultDelayMs", value.defaultDelayMs.takeIf { it != 0L })
         .putOpt("applyFreezeBinder", value.applyFreezeBinder)
 
@@ -168,6 +169,7 @@ object PolicyCodec {
         patchLists = obj.oBool("patchLists") ?: false,
         compactEvents = obj.oBool("compactEvents") ?: false,
         filterPolarityInverted = obj.oBool("filterPolarityInverted") ?: false,
+        uiExpert = obj.oBool("uiExpert") ?: false,
         defaultDelayMs = (obj.oLong("defaultDelayMs") ?: 0L).coerceIn(0L, 600_000L),
         applyFreezeBinder = obj.oBool("applyFreezeBinder"),
     )

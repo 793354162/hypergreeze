@@ -65,12 +65,13 @@ class PolicyEngine(val policy: Policy) {
         processName: String? = null,
     ): Boolean {
         if (!enabled || pkg == null) return original
-        if (appPolicy(pkg) == null) return original
-        return when (mode(pkg, processName)) {
+        // Single map lookup: this runs on every GreeZe filter() call.
+        val app = appPolicy(pkg) ?: return original
+        val effective = app.processMode(processName) ?: app.mode
+        return when (effective) {
             FreezeMode.FOLLOW -> original
             FreezeMode.NEVER -> false
             FreezeMode.IMMEDIATE, FreezeMode.CUSTOM -> {
-                val app = appPolicy(pkg)!!
                 val override = when {
                     app.maskKeep and reason != 0 -> false
                     app.maskDrop and reason != 0 -> true

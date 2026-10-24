@@ -32,11 +32,18 @@ object Keys {
     /** One-shot command posted by the UI, executed by the hook side. See [Command]. */
     const val COMMAND = "greeze_ctl_command_v1"
 
+    /**
+     * Side-effect ledger: every change the module makes outside its own data (freeze, network /
+     * job / wakelock restriction, list patch, binder switch, mode trigger). Reversible items carry
+     * enough information to undo them; irreversible ones say so. See docs/REVERSIBILITY.md.
+     */
+    const val JOURNAL = "greeze_ctl_journal_v1"
+
     /** Broadcast used as a best-effort fast path; polling is the guaranteed path. */
     const val ACTION_STATE_CHANGED = "dev.hypergreeze.action.STATE_CHANGED"
 
     val ALL: List<String> = listOf(
-        POLICY, HEARTBEAT, EVENTS, LOGS, BOOT_GUARD, SAFE_MODE_REQUEST, SAFE_MODE_REASON, COMMAND,
+        POLICY, HEARTBEAT, EVENTS, LOGS, BOOT_GUARD, SAFE_MODE_REQUEST, SAFE_MODE_REASON, COMMAND, JOURNAL,
     )
 }
 
@@ -56,6 +63,9 @@ object Module {
 
     const val LOG_RING = 120
     const val EVENT_RING = 60
+
+    /** Side-effect ledger capacity. Larger than the event ring: it is what "undo" depends on. */
+    const val JOURNAL_RING = 200
 
     /** Safety valve: after this many consecutive unclean boots the hooks stay passive. */
     const val BOOT_GUARD_LIMIT = 3

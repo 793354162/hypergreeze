@@ -128,13 +128,13 @@ class AppInventory(private val context: Context) {
 
 /** Tiny icon cache: `getApplicationIcon` is a Binder call, so it must not run per frame. */
 object IconCache {
-    private val cache = object : android.util.LruCache<String, ImageBitmap>(96) {}
+    private val cache = object : android.util.LruCache<String, ImageBitmap>(200) {}
 
     fun icon(context: Context, pkg: String): ImageBitmap? {
         cache.get(pkg)?.let { return it }
         return try {
             val drawable: Drawable = context.packageManager.getApplicationIcon(pkg)
-            val bitmap = drawable.toBitmap(width = 96, height = 96).asImageBitmap()
+            val bitmap = drawable.toBitmap(width = 72, height = 72).asImageBitmap()
             cache.put(pkg, bitmap)
             bitmap
         } catch (_: Throwable) {

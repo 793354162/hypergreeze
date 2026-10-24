@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import dev.hypergreeze.core.EventType
+import dev.hypergreeze.core.Explain
 import dev.hypergreeze.core.HookState
 import dev.hypergreeze.ui.components.ButtonStyle
 import dev.hypergreeze.ui.components.HgIcons
@@ -77,6 +78,27 @@ fun HomePage(
         title = "HyperGreeze",
         subtitle = "逐 App 冻结控制 · libxposed API 102",
     ) {
+        item(key = "summary") {
+            Block {
+                Gap(4)
+                MiuixCard {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        MiuixText(
+                            "当前效果",
+                            style = MiuixType.smallSectionTitle,
+                            color = colors.textSecondary,
+                        )
+                        Gap(4)
+                        MiuixText(
+                            Explain.summary(state.policy),
+                            style = MiuixType.caption,
+                            color = colors.textPrimary,
+                        )
+                    }
+                }
+            }
+        }
+
         item(key = "status") {
             Block {
                 Gap(4)

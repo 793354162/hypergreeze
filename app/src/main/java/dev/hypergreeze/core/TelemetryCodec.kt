@@ -30,6 +30,8 @@ object TelemetryCodec {
         root.put("bootGuard", hb.bootGuard)
         root.put("revision", hb.revision)
         root.put("lastSeq", hb.lastCommandSeq)
+        root.put("journal", hb.journalUndoable)
+        root.put("suppressed", hb.suppressed)
 
         val hooks = JSONArray()
         for (hook in hb.hooks) {
@@ -94,6 +96,8 @@ object TelemetryCodec {
                 bootGuard = root.oInt("bootGuard") ?: 0,
                 revision = root.oLong("revision") ?: 0L,
                 lastCommandSeq = root.oLong("lastSeq") ?: 0L,
+                journalUndoable = root.oInt("journal") ?: 0,
+                suppressed = root.oBool("suppressed") ?: false,
                 hooks = hooks,
                 capabilities = caps,
             )

@@ -99,6 +99,10 @@ data class Heartbeat(
     val revision: Long = 0L,
     /** Highest command sequence the hook side has executed; lets the UI avoid replays. */
     val lastCommandSeq: Long = 0L,
+    /** How many journal entries can still be undone right now. */
+    val journalUndoable: Int = 0,
+    /** True once the hook side has reverted and is refusing to re-apply until the policy changes. */
+    val suppressed: Boolean = false,
     val hooks: List<HookStatus> = emptyList(),
     val capabilities: Map<String, Boolean> = emptyMap(),
 ) {

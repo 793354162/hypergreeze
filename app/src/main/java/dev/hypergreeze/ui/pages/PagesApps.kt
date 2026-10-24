@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.hypergreeze.core.AppPolicy
+import dev.hypergreeze.core.Explain
 import dev.hypergreeze.core.FreezeMode
 import dev.hypergreeze.core.ResourceSwitches
 import dev.hypergreeze.core.SceneBit
@@ -46,6 +47,7 @@ import dev.hypergreeze.ui.components.MiuixEmptyState
 import dev.hypergreeze.ui.components.MiuixRow
 import dev.hypergreeze.ui.components.MiuixSegmented
 import dev.hypergreeze.ui.components.MiuixSlider
+import dev.hypergreeze.ui.components.MiuixSwitch
 import dev.hypergreeze.ui.components.MiuixText
 import dev.hypergreeze.ui.components.MiuixTextField
 import dev.hypergreeze.ui.components.MiuixTriSelector
@@ -171,6 +173,24 @@ fun AppsPage(
     }
 }
 
+private fun resourceValueOf(app: AppPolicy, key: String): Boolean? = when (key) {
+    "net" -> app.resources.net
+    "alarm" -> app.resources.alarm
+    "job" -> app.resources.job
+    "wakelock" -> app.resources.wakelock
+    "broadcast" -> app.resources.broadcast
+    else -> app.resources.cpu
+}
+
+private fun thawValueOf(app: AppPolicy, key: String): Boolean? = when (key) {
+    "screenOn" -> app.thawOn.screenOn
+    "netChange" -> app.thawOn.netChange
+    "notification" -> app.thawOn.notification
+    "audioFocus" -> app.thawOn.audioFocus
+    "charging" -> app.thawOn.charging
+    else -> app.thawOn.externalWake
+}
+
 @Composable
 fun AppDetailPage(
     pkg: String,
@@ -181,6 +201,7 @@ fun AppDetailPage(
     val colors = MiuixTheme.colors
     val app = state.policy.appOrDefault(pkg)
     val entry = state.apps.firstOrNull { it.pkg == pkg }
+    val expert = state.policy.global.uiExpert
     var sheet by rememberSaveable { mutableStateOf(0) }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -189,6 +210,25 @@ fun AppDetailPage(
             subtitle = "$pkg · uid ${entry?.uid ?: "?"}",
             onBack = onBack,
         ) {
+            item(key = "explain") {
+                Block {
+                    Gap(4)
+                    MiuixCard {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            MiuixText("这个应用现在会怎样", style = MiuixType.smallSectionTitle, color = colors.textSecondary)
+                            Gap(6)
+                            Explain.appLines(pkg, app, state.policy.global).forEach { line ->
+                                Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                                    MiuixText("·", style = MiuixType.caption, color = colors.primary)
+                                    Spacer(Modifier.width(6.dp))
+                                    MiuixText(line, style = MiuixType.caption, color = colors.textPrimary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             item(key = "mode") {
                 Block {
                     Gap(4)
@@ -213,94 +253,135 @@ fun AppDetailPage(
             }
 
             item(key = "timing") {
-                DetailSectionTitle("时机")
-                Block {
-                    MiuixCard {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                MiuixText("冻结延时", style = MiuixType.rowTitle, modifier = Modifier.weight(1f))
-                                MiuixText("${app.delayMs} ms", style = MiuixType.rowValue, color = colors.primary)
+                if (!expert) {
+                    // Simple mode: one slider, the one people actually change.
+                    Block {
+                        MiuixCard {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    MiuixText("退后台多久后冻结", style = MiuixType.rowTitle, modifier = Modifier.weight(1f))
+                                    MiuixText("${app.delayMs} ms", style = MiuixType.rowValue, color = colors.primary)
+                                }
+                                MiuixSlider(
+                                    value = app.delayMs.toFloat(),
+                                    onValueChange = { value -> vm.updateApp(pkg) { it.copy(delayMs = value.toLong()) } },
+                                    valueRange = 0f..3000f,
+                                    step = 100f,
+                                )
+                                MiuixText(
+                                    "0 ms = 一退到后台就冻结；只有「立即冻结」模式用得到这个值",
+                                    style = MiuixType.tiny,
+                                    color = colors.textSecondary,
+                                )
                             }
-                            MiuixSlider(
-                                value = app.delayMs.toFloat(),
-                                onValueChange = { value -> vm.updateApp(pkg) { it.copy(delayMs = value.toLong()) } },
-                                valueRange = 0f..3000f,
-                                step = 100f,
-                            )
-                            Gap(8)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                MiuixText("反抖动冷却", style = MiuixType.rowTitle, modifier = Modifier.weight(1f))
-                                MiuixText("${app.thawCooldownMs} ms", style = MiuixType.rowValue, color = colors.primary)
+                        }
+                    }
+                } else {
+                    DetailSectionTitle("时机")
+                    Block {
+                        MiuixCard {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    MiuixText("冻结延时", style = MiuixType.rowTitle, modifier = Modifier.weight(1f))
+                                    MiuixText("${app.delayMs} ms", style = MiuixType.rowValue, color = colors.primary)
+                                }
+                                MiuixSlider(
+                                    value = app.delayMs.toFloat(),
+                                    onValueChange = { value -> vm.updateApp(pkg) { it.copy(delayMs = value.toLong()) } },
+                                    valueRange = 0f..3000f,
+                                    step = 100f,
+                                )
+                                Gap(8)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    MiuixText("反抖动冷却", style = MiuixType.rowTitle, modifier = Modifier.weight(1f))
+                                    MiuixText("${app.thawCooldownMs} ms", style = MiuixType.rowValue, color = colors.primary)
+                                }
+                                MiuixSlider(
+                                    value = app.thawCooldownMs.toFloat(),
+                                    onValueChange = { value ->
+                                        vm.updateApp(pkg) { it.copy(thawCooldownMs = value.toLong()) }
+                                    },
+                                    valueRange = 0f..60_000f,
+                                    step = 1_000f,
+                                )
                             }
-                            MiuixSlider(
-                                value = app.thawCooldownMs.toFloat(),
-                                onValueChange = { value ->
-                                    vm.updateApp(pkg) { it.copy(thawCooldownMs = value.toLong()) }
-                                },
-                                valueRange = 0f..60_000f,
-                                step = 1_000f,
-                            )
                         }
                     }
                 }
             }
 
-            item(key = "mask") {
-                Block {
-                    MiuixCard {
-                        MiuixRow(
-                            title = "场景掩码",
-                            subtitle = "强制豁免 / 强制不豁免 的原因位",
-                            value = "keep ${app.keepBits.size} · drop ${app.dropBits.size}",
-                            showArrow = true,
-                            onClick = { sheet = 1 },
-                        )
-                    }
-                }
-            }
-
-            item(key = "process") {
-                Block {
-                    MiuixCard {
-                        MiuixRow(
-                            title = "子进程例外",
-                            subtitle = "按完整进程名覆盖（如 :push）",
-                            value = "${app.processes.size} 条",
-                            showArrow = true,
-                            onClick = { sheet = 2 },
-                        )
-                    }
-                }
-            }
-
-            item(key = "resources") {
-                DetailSectionTitle("资源联动")
-                Block {
-                    MiuixCard {
-                        ResourceSwitches.ORDER.forEachIndexed { index, entryRow ->
-                            if (index > 0) MiuixDivider()
-                            TriRow(
-                                title = entryRow.second,
-                                value = when (entryRow.first) {
-                                    "net" -> app.resources.net
-                                    "alarm" -> app.resources.alarm
-                                    "job" -> app.resources.job
-                                    "wakelock" -> app.resources.wakelock
-                                    "broadcast" -> app.resources.broadcast
-                                    else -> app.resources.cpu
-                                },
-                                onChange = { vm.setResource(pkg, entryRow.first, it) },
+            if (expert) {
+                item(key = "mask") {
+                    Block {
+                        MiuixCard {
+                            MiuixRow(
+                                title = "场景掩码",
+                                subtitle = "强制豁免 / 强制不豁免 的原因位",
+                                value = "keep ${app.keepBits.size} · drop ${app.dropBits.size}",
+                                showArrow = true,
+                                onClick = { sheet = 1 },
                             )
+                        }
+                    }
+                }
+
+                item(key = "process") {
+                    Block {
+                        MiuixCard {
+                            MiuixRow(
+                                title = "子进程例外",
+                                subtitle = "按完整进程名覆盖（如 :push）",
+                                value = "${app.processes.size} 条",
+                                showArrow = true,
+                                onClick = { sheet = 2 },
+                            )
+                        }
+                    }
+                }
+
+                item(key = "resources") {
+                    DetailSectionTitle("资源联动")
+                    Block {
+                        MiuixCard {
+                            ResourceSwitches.ORDER.forEachIndexed { index, entryRow ->
+                                if (index > 0) MiuixDivider()
+                                TriRow(
+                                    title = entryRow.second,
+                                    subtitle = Explain.resourceLine(entryRow.first, resourceValueOf(app, entryRow.first)),
+                                    value = resourceValueOf(app, entryRow.first),
+                                    onChange = { vm.setResource(pkg, entryRow.first, it) },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item(key = "thaw") {
+                    DetailSectionTitle("解冻条件")
+                    Block {
+                        MiuixCard {
+                            ThawTriggerBlocks(app) { key, value -> vm.setThaw(pkg, key, value) }
                         }
                     }
                 }
             }
 
-            item(key = "thaw") {
-                DetailSectionTitle("解冻条件")
+            item(key = "expert-toggle") {
+                Gap(8)
                 Block {
                     MiuixCard {
-                        ThawTriggerBlocks(app) { key, value -> vm.setThaw(pkg, key, value) }
+                        MiuixRow(
+                            title = "专家选项",
+                            subtitle = "显示 32 位掩码、子进程、资源联动、解冻条件",
+                            trailing = {
+                                MiuixSwitch(
+                                    checked = expert,
+                                    onCheckedChange = { value ->
+                                        vm.setGlobal { g -> g.copy(uiExpert = value) }
+                                    },
+                                )
+                            },
+                        )
                     }
                 }
             }
@@ -360,16 +441,11 @@ fun AppDetailPage(
 private fun ThawTriggerBlocks(app: AppPolicy, onChange: (String, Boolean?) -> Unit) {
     ThawTriggers.ORDER.forEachIndexed { index, row ->
         if (index > 0) MiuixDivider()
+        val value = thawValueOf(app, row.first)
         TriRow(
             title = row.second,
-            value = when (row.first) {
-                "screenOn" -> app.thawOn.screenOn
-                "netChange" -> app.thawOn.netChange
-                "notification" -> app.thawOn.notification
-                "audioFocus" -> app.thawOn.audioFocus
-                "charging" -> app.thawOn.charging
-                else -> app.thawOn.externalWake
-            },
+            subtitle = Explain.thawLine(row.first, value),
+            value = value,
             onChange = { onChange(row.first, it) },
         )
     }

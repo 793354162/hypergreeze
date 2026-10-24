@@ -29,9 +29,16 @@ data class Command(
         const val OP_APPLY_LISTS = "applyLists"
         const val OP_SET_BINDER = "setFreezeBinder"
 
+        /** Undo every journaled side effect, thaw everything, stop re-applying. Keeps the policy. */
+        const val OP_REVERT_ALL = "revertAll"
+
+        /** Revert + delete every Settings key and system property this module owns. For uninstall. */
+        const val OP_CLEAR_DATA = "clearData"
+
         val ALL_OPS = listOf(
             OP_THAW_ALL, OP_THAW_UID, OP_FREEZE_UID, OP_FREEZE_PKG, OP_QUICK_MODE,
             OP_RESET_CGROUP, OP_CLEAR_EVENTS, OP_CLEAR_SAFE_MODE, OP_APPLY_LISTS, OP_SET_BINDER,
+            OP_REVERT_ALL, OP_CLEAR_DATA,
         )
     }
 }

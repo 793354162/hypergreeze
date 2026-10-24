@@ -23,6 +23,13 @@ class PolicyStore(private val context: Context) {
     @Volatile
     private var cached: Policy = Policy.EMPTY
 
+    /**
+     * Rebuilt only when the document actually changes. `HookInstaller` asks for an engine on every
+     * hook invocation (`filter` runs constantly), so allocating one per call would be pure garbage.
+     */
+    @Volatile
+    private var cachedEngine: PolicyEngine = PolicyEngine(Policy.EMPTY)
+
     @Volatile
     private var rawCache: String? = null
 
@@ -36,7 +43,7 @@ class PolicyStore(private val context: Context) {
 
     private var observer: ContentObserver? = null
 
-    val engine: PolicyEngine get() = PolicyEngine(cached)
+    val engine: PolicyEngine get() = cachedEngine
     val policy: Policy get() = cached
     val raw: String? get() = rawCache
 
@@ -72,11 +79,14 @@ class PolicyStore(private val context: Context) {
         if (raw == rawCache) return false
         val parsed = PolicyCodec.decode(raw)
         val changed = parsed != cached
+        if (changed) {
+            cachedEngine = PolicyEngine(parsed)
+        }
         rawCache = raw
         cached = parsed
         reloadCount++
         if (changed) {
-            Logx.i("policy reloaded: ${PolicyEngine(parsed).summary()}")
+            Logx.i("policy reloaded: ${cachedEngine.summary()}")
         }
         return changed
     }

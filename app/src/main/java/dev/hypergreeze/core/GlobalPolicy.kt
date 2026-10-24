@@ -29,6 +29,12 @@ data class GlobalPolicy(
      * flipping this inverts only the module's *override*, never the system's own answer.
      */
     val filterPolarityInverted: Boolean = false,
+    /**
+     * UI verbosity, not a system switch. `false` (default) shows only the four modes and the few
+     * switches that most people need; `true` reveals the 32-bit mask editor, per-process overrides,
+     * resource follow-ups and thaw triggers. Stored with the policy so it survives restarts.
+     */
+    val uiExpert: Boolean = false,
 ) {
     companion object {
         val SAFE_DEFAULT = GlobalPolicy()

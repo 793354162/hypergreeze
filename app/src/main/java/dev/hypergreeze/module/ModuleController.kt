@@ -48,6 +48,7 @@ class ModuleController(
     private var work: Handler? = null
     private var refs: GreezeRefs? = null
     private var facade: GreezeFacade? = null
+    private var effector: Effector? = null
     private var installer: HookInstaller? = null
     private var telemetry: ModuleTelemetry? = null
     private var store: PolicyStore? = null
@@ -75,6 +76,10 @@ class ModuleController(
         val greeze = GreezeFacade(discovered)
         facade = greeze
 
+        // Every mutation of GreeZe state goes through the effector so it lands in the ledger.
+        val eff = Effector(greeze, { telemetry }, { store?.policy?.revision ?: 0L })
+        effector = eff
+
         val safety = SafetyGuard()
         guard = safety
         val decision = safety.begin()
@@ -92,6 +97,7 @@ class ModuleController(
             work = workerHandler,
         )
         installer = hooks
+        hooks.effector = eff
         hooks.passive = decision.passive
         hooks.onGreezeReady = { main.post { ensureContext() } }
         val statuses = hooks.install()
@@ -128,6 +134,7 @@ class ModuleController(
         val tm = ModuleTelemetry(ctx)
         telemetry = tm
         tm.loadExistingEvents()
+        tm.loadExistingJournal()
         installer?.telemetry = tm
 
         // Restore the command watermark from the previous generation's heartbeat so an old command
@@ -162,15 +169,10 @@ class ModuleController(
     private fun applyGlobalSideEffects(engine: PolicyEngine) {
         val global = engine.policy.global
         telemetry?.eventCap = if (global.compactEvents) COMPACT_EVENT_CAP else Module.EVENT_RING
+        // A revert latches `suppressed`; any policy edit releases it.
+        effector?.onPolicyRevision(engine.policy.revision)
         global.applyFreezeBinder?.let { desired ->
-            work?.post {
-                val ok = facade?.setFreezeBinderEnabled(desired) == true
-                telemetry?.record(
-                    EventType.INFO,
-                    result = if (ok) "ok" else "fail",
-                    detail = "setFreezeBinderEnableCloud($desired)",
-                )
-            }
+            work?.post { effector?.freezeBinder(desired) }
         }
         if (global.patchLists) work?.post { applyLists() }
     }
@@ -263,6 +265,7 @@ class ModuleController(
         work?.post {
             telemetry?.flushEvents()
             telemetry?.flushLogs()
+            telemetry?.flushJournal()
         }
         if (tickCount % HEARTBEAT_EVERY_TICKS == 0L) publishHeartbeat()
     }
@@ -289,6 +292,8 @@ class ModuleController(
             bootGuard = guard?.decision?.bootGuard ?: 0,
             revision = engine.policy.revision,
             lastCommandSeq = lastCommandSeq,
+            journalUndoable = tm.journalUndoable(),
+            suppressed = effector?.suppressed == true,
             hooks = hooks.snapshot(),
             capabilities = refs?.capabilities() ?: emptyMap(),
         )
@@ -323,35 +328,48 @@ class ModuleController(
 
     private fun execute(command: Command): String {
         val greeze = facade ?: return "no-greeze"
+        val eff = effector
         val tm = telemetry
         return when (command.op) {
             Command.OP_THAW_ALL, Command.OP_RESET_CGROUP -> {
-                val ok = greeze.thawAll()
+                val ok = eff?.thawAll() ?: greeze.thawAll()
                 tm?.record(EventType.THAW, result = if (ok) "ok" else "fail", detail = command.op)
                 if (ok) "ok" else "fail"
             }
 
             Command.OP_THAW_UID -> {
-                val ok = greeze.thawUid(command.uid)
+                val ok = eff?.thaw(command.uid, command.pkg) ?: greeze.thawUid(command.uid)
                 tm?.record(EventType.THAW, command.uid, command.pkg, result = if (ok) "ok" else "fail")
                 if (ok) "ok" else "fail"
             }
 
-            Command.OP_FREEZE_UID ->
-                greeze.freezeUid(command.uid, 0L, Module.REASON_MOD, Module.FREEZE_TAG, 0) ?: "fail"
+            Command.OP_FREEZE_UID -> {
+                if (eff != null) {
+                    eff.freeze(command.uid, command.pkg, Module.REASON_MOD) ?: "fail"
+                } else {
+                    greeze.freezeUid(command.uid, 0L, Module.REASON_MOD, Module.FREEZE_TAG, 0) ?: "fail"
+                }
+            }
 
             Command.OP_FREEZE_PKG -> {
                 val uid = uidOf(command.pkg)
-                if (uid <= 0) {
-                    "no-uid"
-                } else {
-                    greeze.freezeUid(uid, 0L, Module.REASON_MOD, Module.FREEZE_TAG, 0) ?: "fail"
+                when {
+                    uid <= 0 -> "no-uid"
+                    eff != null -> eff.freeze(uid, command.pkg, Module.REASON_MOD) ?: "fail"
+                    else -> greeze.freezeUid(uid, 0L, Module.REASON_MOD, Module.FREEZE_TAG, 0) ?: "fail"
                 }
             }
 
             Command.OP_QUICK_MODE -> {
                 val mode = command.arg ?: "quick_freeze"
-                if (greeze.triggerQuickFreezeMode(mode, command.uid, "hypergreeze")) "ok" else "fail"
+                if (eff != null) {
+                    eff.quickMode(mode, command.uid)
+                    "ok"
+                } else if (greeze.triggerQuickFreezeMode(mode, command.uid, "hypergreeze")) {
+                    "ok"
+                } else {
+                    "fail"
+                }
             }
 
             Command.OP_CLEAR_EVENTS -> {
@@ -367,10 +385,24 @@ class ModuleController(
 
             Command.OP_SET_BINDER -> {
                 val enabled = command.arg == "1"
-                if (greeze.setFreezeBinderEnabled(enabled)) "ok" else "fail"
+                if (eff != null) {
+                    eff.freezeBinder(enabled)
+                    "ok"
+                } else if (greeze.setFreezeBinderEnabled(enabled)) {
+                    "ok"
+                } else {
+                    "fail"
+                }
             }
 
             Command.OP_APPLY_LISTS -> applyLists()
+
+            Command.OP_REVERT_ALL -> eff?.revertAll() ?: "no-effector"
+
+            Command.OP_CLEAR_DATA -> {
+                val reverted = eff?.revertAll() ?: "no-effector"
+                "$reverted；${clearAllData()}"
+            }
 
             else -> "unknown-op"
         }
@@ -378,13 +410,31 @@ class ModuleController(
 
     private fun applyLists(): String {
         val engine = store?.engine ?: return "no-policy"
-        val greeze = facade ?: return "no-greeze"
+        val eff = effector ?: return "no-effector"
         val never = engine.policy.apps.filter { it.value.mode == FreezeMode.NEVER }.keys
         val immediate = engine.policy.apps.filter { it.value.mode == FreezeMode.IMMEDIATE }.keys
         var ok = false
-        if (never.isNotEmpty()) ok = greeze.patchListField("mNoRestrictAppSet", never) || ok
-        if (immediate.isNotEmpty()) ok = greeze.patchListField("mGrabTicketsAppList", immediate) || ok
+        if (never.isNotEmpty()) ok = eff.patchList("mNoRestrictAppSet", never) || ok
+        if (immediate.isNotEmpty()) ok = eff.patchList("mGrabTicketsAppList", immediate) || ok
         return if (ok) "ok(never=${never.size},immediate=${immediate.size})" else "fail"
+    }
+
+    /**
+     * Deletes every Settings key and system property this module owns. Intended for "I am about to
+     * uninstall": hooks die with the process and in-memory list patches vanish, but resource
+     * restrictions GreeZe already applied and our own keys would otherwise survive.
+     */
+    private fun clearAllData(): String {
+        val tm = telemetry ?: return "no-telemetry"
+        var deleted = 0
+        for (key in Keys.ALL) {
+            if (tm.writeString(key, null)) deleted++
+        }
+        SysProp.setInt(SafetyGuard.PROP_GUARD, 0)
+        SysProp.setInt(SafetyGuard.PROP_SAFE, 0)
+        SysProp.set(SafetyGuard.PROP_SAFE_REASON, "")
+        Logx.w("cleared $deleted settings keys + hypergreeze properties")
+        return "已清除 $deleted 个设置键与全部模块属性"
     }
 
     private fun uidOf(pkg: String?): Int {

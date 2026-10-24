@@ -41,6 +41,10 @@ class HookInstaller(
     @Volatile
     var telemetry: ModuleTelemetry? = null
 
+    /** All GreeZe-mutating calls go through this so the side-effect ledger cannot be skipped. */
+    @Volatile
+    var effector: Effector? = null
+
     /** Called when GreeZe's own `init(Context)` ran, i.e. the service is fully alive. */
     @Volatile
     var onGreezeReady: (() -> Unit)? = null
@@ -504,15 +508,17 @@ class HookInstaller(
         val revision = engine.policy.revision
         if (resourceAppliedRev[uid] == revision) return
         resourceAppliedRev[uid] = revision
-        engine.resource("net", pkg)?.let { facade.setUdpRestrict(uid, it) }
-        engine.resource("job", pkg)?.let { if (it) facade.setJobRestrict(uid) }
-        engine.resource("wakelock", pkg)?.let { facade.setWakeLockLimit(uid, it) }
+        val eff = effector ?: return
+        engine.resource("net", pkg)?.let { eff.netRestrict(uid, pkg, it) }
+        engine.resource("job", pkg)?.let { if (it) eff.jobRestrict(uid, pkg) }
+        engine.resource("wakelock", pkg)?.let { eff.wakelockLimit(uid, pkg, it) }
     }
 
     // ------------------------------------------------------------------ helpers
 
     private fun hit(id: String, error: Boolean = false) {
-        val counter = counters.computeIfAbsent(id) { Counter() }
+        // Fast path first: `filter` is called constantly, so avoid the lambda in computeIfAbsent.
+        val counter = counters[id] ?: counters.computeIfAbsent(id) { Counter() }
         if (error) counter.errors.incrementAndGet() else counter.hits.incrementAndGet()
     }
 

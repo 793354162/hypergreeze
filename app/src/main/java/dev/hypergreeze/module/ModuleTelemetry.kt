@@ -6,6 +6,9 @@ import android.provider.Settings
 import dev.hypergreeze.core.EventRecord
 import dev.hypergreeze.core.EventType
 import dev.hypergreeze.core.Heartbeat
+import dev.hypergreeze.core.JournalCodec
+import dev.hypergreeze.core.JournalEntry
+import dev.hypergreeze.core.JournalRing
 import dev.hypergreeze.core.Keys
 import dev.hypergreeze.core.Module
 import dev.hypergreeze.core.TelemetryCodec
@@ -38,7 +41,52 @@ class ModuleTelemetry(private val context: Context) {
     @Volatile
     var eventCap: Int = Module.EVENT_RING
 
+    private val journal = JournalRing(Module.JOURNAL_RING)
+    private var journalDirty = false
+
     val heartbeat: Heartbeat? get() = lastHeartbeat
+
+    // ------------------------------------------------------------------ side-effect ledger
+
+    fun loadExistingJournal() {
+        try {
+            val existing = JournalCodec.decode(readString(Keys.JOURNAL))
+            synchronized(lock) {
+                journal.clear()
+                existing.forEach { journal.add(it) }
+            }
+        } catch (t: Throwable) {
+            Logx.w("loadExistingJournal failed", t)
+        }
+    }
+
+    fun journalAdd(entry: JournalEntry) {
+        synchronized(lock) {
+            journal.add(entry)
+            journalDirty = true
+        }
+    }
+
+    fun journalEntries(): List<JournalEntry> = synchronized(lock) { journal.snapshot() }
+
+    fun journalUndoable(): Int = synchronized(lock) { journal.undoableCount }
+
+    fun flushJournal() {
+        val encoded = synchronized(lock) {
+            if (!journalDirty) return
+            journalDirty = false
+            JournalCodec.encode(journal.snapshot())
+        }
+        writeString(Keys.JOURNAL, encoded)
+    }
+
+    fun clearJournal() {
+        synchronized(lock) {
+            journal.clear()
+            journalDirty = false
+        }
+        writeString(Keys.JOURNAL, "[]")
+    }
 
     fun loadExistingEvents() {
         try {
