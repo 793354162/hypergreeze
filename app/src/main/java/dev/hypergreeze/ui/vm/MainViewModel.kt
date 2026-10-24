@@ -16,6 +16,7 @@ import dev.hypergreeze.core.SceneBit
 import dev.hypergreeze.ui.data.AppEntry
 import dev.hypergreeze.ui.data.AppInventory
 import dev.hypergreeze.ui.data.SettingsGateway
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -60,7 +61,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var pollJob: Job? = null
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val apps = runCatching { inventory.load() }.getOrDefault(emptyList())
             _state.update { it.copy(apps = apps, loading = false) }
         }
@@ -235,6 +236,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun requestWriteSettingsHint() {
         notify("请手动到 系统设置 → 应用 → HyperGreeze → 修改系统设置 授权")
+    }
+
+    fun notifyManagerMissing() {
+        notify("未找到 LSPosed 管理器；请手动打开并在「模块」里启用 HyperGreeze")
     }
 
     fun thawEverything() = send(Command.OP_THAW_ALL)

@@ -57,6 +57,7 @@ fun HomePage(
     onQuickMode: (String) -> Unit,
     onClearSafeMode: () -> Unit,
     onRequestSafeMode: () -> Unit,
+    onOpenManager: () -> Unit,
 ) {
     val colors = MiuixTheme.colors
     val hb = state.heartbeat
@@ -155,6 +156,24 @@ fun HomePage(
                         text = "本机未找到 com.miui.server.greeze.*，模块不会做任何事。",
                         tone = NoticeTone.WARNING,
                     )
+                }
+            }
+        }
+
+        item(key = "onboarding") {
+            if (hb == null) {
+                Gap()
+                Block {
+                    MiuixCard {
+                        MiuixRow(
+                            title = "启用步骤",
+                            subtitle = "1) LSPosed 里启用本模块（作用域只勾「系统框架」）\n" +
+                                "2) 授予「修改系统设置」\n3) 软重启 system_server",
+                            onClick = onOpenManager,
+                            value = "打开 LSPosed",
+                            valueColor = colors.primary,
+                        )
+                    }
                 }
             }
         }

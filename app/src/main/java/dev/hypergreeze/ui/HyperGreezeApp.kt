@@ -100,6 +100,19 @@ fun HyperGreezeApp(vm: MainViewModel) {
                             onQuickMode = { mode -> vm.send(Command.OP_QUICK_MODE, arg = mode) },
                             onClearSafeMode = { vm.clearSafeMode() },
                             onRequestSafeMode = { vm.requestSafeMode() },
+                            onOpenManager = {
+                                val intent = context.packageManager
+                                    .getLaunchIntentForPackage("org.lsposed.manager")
+                                if (intent != null) {
+                                    try {
+                                        context.startActivity(intent)
+                                    } catch (_: Throwable) {
+                                        vm.notifyManagerMissing()
+                                    }
+                                } else {
+                                    vm.notifyManagerMissing()
+                                }
+                            },
                         )
 
                         tab == 1 -> AppsPage(

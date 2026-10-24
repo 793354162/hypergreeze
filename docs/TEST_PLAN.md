@@ -358,6 +358,21 @@
     adb shell settings get system greeze_ctl_events_v1 | jq '.[] | select(.t=="freeze")'
     ```
 
+- [ ] **5.6 极性反转开关（诊断页逃生阀）**
+  - 操作：只在 5.3/5.4 出现「keep 反而更易被冻」「drop 反而更安全」这类反向现象时才做——诊断页打开「反射 filter 极性反转」，等价于策略里 `"global":{"filterPolarityInverted":true}`，然后重跑 5.3
+    ```bash
+    adb shell settings put system greeze_ctl_policy_v1 \
+      '{"v":2,"global":{"filterPolarityInverted":true},"apps":{"com.tencent.mm":{"mode":"immediate","keep":16777218,"drop":64}}}'
+    adb shell settings get system greeze_ctl_policy_v1 | jq '.global.filterPolarityInverted'
+    ```
+  - 期望：掩码语义整体取反（`keep` 位变成允许冻结、`drop` 位变成强制豁免）；**未配置的 App、未命中的 reason 仍返回系统原值**；开关值随策略持久化，重启后保持
+  - 失败判定：打开后连未配置的 App 行为也变了 → 反转把 `original` 也一起替换了，属缺陷（代码只在 `override != null` 时取反）；关掉后行为没恢复 → 策略没重写成功
+  - 取证：
+    ```bash
+    adb shell settings get system greeze_ctl_policy_v1 | jq '{polarity:.global.filterPolarityInverted, apps}'
+    adb shell settings get system greeze_ctl_heartbeat_v1 | jq '.revision'
+    ```
+
 ---
 
 ## 阶段 6：资源联动（net / job / wakelock 各一次）
@@ -546,7 +561,7 @@
     adb shell settings get system greeze_ctl_events_v1 | jq '.[]|select(.d=="policy-reload")'
     ```
   - 期望：`revision = 0`；事件 `info … policy-reload (rev=0)`；钩子仍 `installed`（模块不卸载，只是全部直通）；目标 App 的冻结行为回到系统默认
-  - 失败判定：`revision` 不变 → 观察者与 30 s 轮询双路径都失效（F2）；删除后仍被模块拦冻结 → 引擎仍持旧策略（缓存问题）
+  - 失败判定：`revision` 不变 → 观察者与 5 s tick 轮询双路径都失效（F2）；删除后仍被模块拦冻结 → 引擎仍持旧策略（缓存问题）
   - 回滚：重新 `settings put` 一份合法策略
 
 - [ ] **9.2 逃生二：关 GreeZe 总闸**

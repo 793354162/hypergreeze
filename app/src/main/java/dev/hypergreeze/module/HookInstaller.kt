@@ -515,10 +515,15 @@ class HookInstaller(
 
     fun snapshot(): List<HookStatus> = statuses.map { (id, status) ->
         val counter = counters[id]
+        val extra = if (id == ID_FOREGROUND) {
+            "uid=${uidArgDecision()}"
+        } else {
+            null
+        }
         val note = when {
             passive -> "safe mode: passive"
             status.note != null -> status.note
-            else -> null
+            else -> extra
         }
         status.copy(
             hits = counter?.hits?.get() ?: 0L,
