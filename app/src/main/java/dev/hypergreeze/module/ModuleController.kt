@@ -16,7 +16,6 @@ import dev.hypergreeze.core.HookState
 import dev.hypergreeze.core.Keys
 import dev.hypergreeze.core.Module
 import dev.hypergreeze.core.Policy
-import dev.hypergreeze.core.PolicyEngine
 import dev.hypergreeze.core.TelemetryCodec
 import dev.hypergreeze.module.greeze.GreezeFacade
 import dev.hypergreeze.module.greeze.GreezeProbe
@@ -30,7 +29,7 @@ import io.github.libxposed.api.XposedModule
  * everything we do there delays the phone:
  *
  *  1. probe GreeZe classes (cheap, reflective only);
- *  2. evaluate the boot-loop guard (system properties only — no `Context` needed yet);
+ *  2. evaluate the boot-loop guard (system properties only -no `Context` needed yet);
  *  3. install hooks; they are harmless while no policy is loaded, because an empty policy means
  *     "every app follows the system";
  *  4. asynchronously acquire a `Context`, then start the policy store, telemetry and the command

@@ -1,4 +1,4 @@
-package dev.hypergreeze.module
+﻿package dev.hypergreeze.module
 
 import android.os.SystemClock
 import dev.hypergreeze.core.EventType
@@ -6,7 +6,6 @@ import dev.hypergreeze.core.FreezeMode
 import dev.hypergreeze.core.HookState
 import dev.hypergreeze.core.HookStatus
 import dev.hypergreeze.core.Module
-import dev.hypergreeze.core.PolicyEngine
 import dev.hypergreeze.core.SceneBit
 import dev.hypergreeze.module.greeze.GreezeFacade
 import dev.hypergreeze.module.greeze.GreezeRefs

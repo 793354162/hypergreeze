@@ -33,6 +33,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -262,7 +263,7 @@ fun MiuixDivider(insetStart: Dp = Dimens.dividerInset) {
 
 /**
  * Standard Miuix list row: `[leading] title/value [trailing]`.
- * Only one right-aligned group is allowed — this is the rule that keeps the list readable.
+ * Only one right-aligned group is allowed -this is the rule that keeps the list readable.
  */
 @Composable
 fun MiuixRow(
@@ -338,7 +339,7 @@ fun MiuixRow(
         if (showArrow) {
             Spacer(Modifier.width(4.dp))
             MiuixIcon(
-                vector = androidx.compose.material.icons.Icons.Filled.KeyboardArrowRight,
+                vector = HgIcons.ChevronRight,
                 tint = if (pressed) colors.textSecondary else colors.textHint,
                 size = Dimens.iconSm,
             )
@@ -487,7 +488,19 @@ fun MiuixEmptyState(
         }
         if (actionLabel != null && onAction != null) {
             Spacer(Modifier.height(24.dp))
-            MiuixButton(text = actionLabel, onClick = onAction, style = ButtonStyle.SECONDARY)
+            Box(
+                modifier = Modifier
+                    .clip(Shapes.pill)
+                    .background(colors.secondaryContainer)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onAction,
+                    )
+                    .padding(horizontal = 18.dp, vertical = 11.dp),
+            ) {
+                MiuixText(actionLabel, style = MiuixType.button, color = colors.primary, maxLines = 1)
+            }
         }
     }
 }
