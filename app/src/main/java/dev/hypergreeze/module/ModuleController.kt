@@ -141,9 +141,24 @@ class ModuleController(
         policyStore.start()
         lastRevision = policyStore.policy.revision
 
+        consumeSafeModeRequest(tm)
         registerObservers(ctx)
         publishHeartbeat()
         work?.post { processCommand() }
+    }
+
+    /**
+     * The UI writes a request flag instead of a `persist.sys.*` property (it cannot write those).
+     * It is consumed here — a few seconds into boot — and latches the property, so the request
+     * takes effect from the **next** boot, which is exactly what the UI promises.
+     */
+    private fun consumeSafeModeRequest(tm: ModuleTelemetry) {
+        if (!tm.readFlag(Keys.SAFE_MODE_REQUEST)) return
+        val reason = tm.readString(Keys.SAFE_MODE_REASON).orEmpty().ifBlank { "用户从界面请求" }
+        SysProp.setInt(SafetyGuard.PROP_SAFE, 1)
+        SysProp.set(SafetyGuard.PROP_SAFE_REASON, reason)
+        tm.writeFlag(Keys.SAFE_MODE_REQUEST, false)
+        Logx.w("safe-mode request consumed ($reason); next boot stays passive")
     }
 
     private fun registerObservers(ctx: Context) {
