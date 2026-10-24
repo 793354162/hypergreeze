@@ -171,6 +171,12 @@ class HookInstaller(
             "GreezeManagerService.freezeUid(int,long,int,String,int):String",
             refs.m("freezeUid"),
         ) { chain -> bodyFreezeUid(chain) }
+
+        install(
+            ID_FREEZE_UIDS,
+            "GreezeManagerService.freezeUids(int[],long,int,String,boolean):List",
+            refs.m("freezeUids"),
+        ) { chain -> bodyFreezeUids(chain) }
     }
 
     private fun installForeground() {
@@ -332,6 +338,42 @@ class HookInstaller(
             Logx.w("freezeUid audit failed", t)
         }
         return result
+    }
+
+    /**
+     * Batch path. GreeZe has several freeze entry points; `freezeUid` covers the single-uid ones
+     * (and `freezeAction`, which funnels into it), while `freezeUids` takes an array and may write
+     * the cgroup per uid without going through `freezeUid`. Filtering the array is therefore the
+     * only way a NEVER policy holds on this path.
+     *
+     * The pid-level entry points (`freezePids` / `freezeProcess`) are intentionally not filtered:
+     * they carry no uid, so a policy lookup would be a guess.
+     */
+    private fun bodyFreezeUids(chain: Chain): Any? {
+        val uids = chain.getArg(0) as? IntArray ?: return chain.proceed()
+        return try {
+            hit(ID_FREEZE_UIDS)
+            val engine = engineProvider()
+            if (passive || !engine.enabled || uids.isEmpty()) return chain.proceed()
+            val kept = uids.filter { uid -> packagesFor(uid).none { engine.neverFreeze(it) } }
+            if (kept.size == uids.size) return chain.proceed()
+            val blocked = uids.filter { it !in kept }
+            telemetry?.record(
+                type = EventType.SKIP,
+                uid = blocked.firstOrNull() ?: 0,
+                pkg = blocked.firstOrNull()?.let { packageFor(it) },
+                result = Module.RESULT_SKIP_BY_MOD,
+                detail = "freezeUids filtered ${blocked.size}/${uids.size}",
+            )
+            if (kept.isEmpty()) return emptyList<Int>()
+            val args = chain.args.toTypedArray()
+            args[0] = kept.toIntArray()
+            chain.proceed(args)
+        } catch (t: Throwable) {
+            hit(ID_FREEZE_UIDS, error = true)
+            Logx.w("freezeUids body failed", t)
+            chain.proceed()
+        }
     }
 
     private fun bodyForeground(chain: Chain): Any? {
@@ -519,6 +561,7 @@ class HookInstaller(
         const val ID_WAKEUP = "wakeup-list"
         const val ID_TEMP_WHITE = "temp-white"
         const val ID_FREEZE_UID = "freeze-uid"
+        const val ID_FREEZE_UIDS = "freeze-uids"
         const val ID_FOREGROUND = "foreground"
         const val ID_SCREEN_ON = "screen-on-thaw"
 
@@ -529,6 +572,7 @@ class HookInstaller(
             ID_WAKEUP,
             ID_TEMP_WHITE,
             ID_FREEZE_UID,
+            ID_FREEZE_UIDS,
             ID_FOREGROUND,
             ID_SCREEN_ON,
         )

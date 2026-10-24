@@ -205,7 +205,7 @@
       adb shell settings put system greeze_ctl_policy_v1 \
         '{"v":2,"apps":{"<PKG>":{"mode":"never"}}}'
       ```
-  - 期望：30 s 内（tick）或立刻（observer）心跳 `revision` 变化；事件页出现 `info … policy-reload (rev=N)`
+  - 期望：5 s 内（tick；按下后内容观察者触发时更快）心跳 `revision` 变化；事件页出现 `info … policy-reload (rev=N)`
   - 失败判定：`revision` 一直是 0 → 写入没落地（appop）或字符串被 shell 改写（F3）
   - 取证：
     ```bash

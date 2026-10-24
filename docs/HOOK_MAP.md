@@ -32,7 +32,7 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:515-523`�
 | 优先级 | `HookInstaller.kt:98` | `setPriority(PRIORITY_DEFAULT)`，不与其他模块抢序 |
 | 异常模式 | `HookInstaller.kt:99` | `ExceptionMode.PROTECTIVE`；按 libxposed API 102 的 javadoc（`.probe/src/io/github/libxposed/api/XposedInterface.java`）：`proceed()` **之前**抛异常 → 框架「当作没这个 hook」继续；`proceed()` **之后**抛异常 → 用 proceed 的结果作为返回；`proceed()` 自己抛的异常照常传播。模块在所有 body 里已经自己 try/catch，这层是第二道保险 |
 | id | `HookInstaller.kt:100` | `.setId(id)`，用于诊断与热重载定位 |
-| 被动模式 | `HookInstaller.kt:49`、`ModuleController.kt:94` | `passive=true` 时 hook 照样装（诊断页能解释「为什么我是被动」），但每个 body 都在改判前 `return original` |
+| 被动模式 | `HookInstaller.kt:49`、`ModuleController.kt:94` | `passive=true` 时 hook 照样装（诊断页能解释「为什么我是被动」），但每个 body 都在改判之前就返回原始结果（`original` 或 `raw`） |
 
 安装顺序（`HookInstaller.install()`，`HookInstaller.kt:74-82`）：
 
@@ -64,7 +64,7 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:515-523`�
 2. `facade.captureInstance(chain.thisObject, "constructor-hook")`（197）把**被构造的实例**记进门面；`captureInstance` 只在对象不同时写入并记录来源（`greeze/GreezeFacade.kt:43-49`）。
 3. 原样返回 `result`（201）。
 
-存在的理由：契约 §H-4 指出 `getInstance()` 是「为空就 new」的 DCL，早期调用会造僵尸实例；构造器是能拿到「真正被 `publishBinderService` 发布的那个对象」的最早时机，早于 `init(Context)`。
+存在的理由：契约 §H-4 指出 `getInstance()` 是「为空就 new」的 DCL，早期调用会造僵尸实例；构造器是能最早拿到实例的时机（早于 `init(Context)`，更早于 `Lifecycle.onStart` 里的 `publishBinderService`），且完全不需要触发那个 DCL。
 
 **失败模式与兜底**
 

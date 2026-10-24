@@ -160,7 +160,8 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 | `audit` | bool | `true` | `true`/`false` | 关掉后 `freezeUid` 的审计事件不再写（`HookInstaller.kt:320`） |
 | `patchLists` | bool | `false` | `true`/`false` | **当前无逻辑读取**：`applyLists` 命令不受它控制（见 §11） |
 | `compactEvents` | bool | `false` | `true`/`false` | **当前无逻辑读取**（见 §11） |
-| `defaultDelayMs` | long | `0` | `0..600000`（解码 `coerceIn`，`PolicyCodec.kt:169`） | app 的 `delayMs` 为 0 时才用它（`PolicyEngine.kt:39-42`） |
+| `filterPolarityInverted` | bool | `false` | `true`/`false` | `true` 时把 `filter` 的**模块覆写**取反（`PolicyEngine.kt:80-81`）；只反转模块自己的答案，系统原值不动。属于「掩码行为与该 ROM 相反」时的逃生开关（诊断页有对应开关） |
+| `defaultDelayMs` | long | `0` | `0..600000`（解码 `coerceIn`，`PolicyCodec.kt:171`） | app 的 `delayMs` 为 0 时才用它（`PolicyEngine.kt:39-42`） |
 | `applyFreezeBinder` | bool? | `null` | `true`/`false`/缺省 | **当前无逻辑读取**；改写 GreeZe 云开关只走 `setFreezeBinder` 命令（见 §11） |
 
 ### 3.3 `apps[<包名>]`
@@ -243,7 +244,8 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
     "forceFreezeOnBackground": true,
     "audit": true,
     "patchLists": false,
-    "compactEvents": false
+    "compactEvents": false,
+    "filterPolarityInverted": false
   },
   "apps": {
     "com.tencent.mm": {
@@ -294,6 +296,10 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 | 7 | 其余 | `original` | 交回系统 |
 
 > `keep` 先于 `drop` 判定：同一位同时出现在两个掩码里时 `keep` 赢。UI 的 `toggleKeepBit` / `toggleDropBit` 已保证互斥（`ui/vm/MainViewModel.kt:153-175`）。
+>
+> **极性逃生阀**：第 5/6 行的返回值是「模块覆写」。`global.filterPolarityInverted = true` 时，覆写整体取反（`PolicyEngine.kt:78-83`）：
+> `override == null → original`；`filterPolarityInverted → !override`；否则 `override`。
+> 也就是说 `keep` 位在反向 ROM 上会表现为「允许冻结」，`drop` 位表现为「强制豁免」，而**系统自己的 `original` 永不被改动**。诊断页「反射 filter 极性反转」开关就是给这一个假设准备的。
 
 ### 4.3 其余两个判定
 
@@ -666,7 +672,8 @@ done
 |---|---|---|
 | `v` 字段 | 解码时缺省填 `2`；**不做版本比较**，任何 int 都接受；编码回写解码得到的值 | `PolicyCodec.kt:35`、`Policy.kt:8` |
 | 未知键 | `org.json` 的 `opt*` 取值方式天然忽略未定义键，不报错 | `core/Jsonx.kt:8-22` |
-| 缺失键 | 各字段回落默认值，不是整份失败 | `PolicyCodec.kt:163-171` |
+| 缺失键 | 各字段回落默认值，不是整份失败 | `PolicyCodec.kt:163-175` |
+| 旧文档没有 `filterPolarityInverted` | 解码为 `false`，行为与加该字段之前完全一致（不反转） | `PolicyCodec.kt:170` |
 | 字段类型错（如 `"keep":"abc"`） | `optInt` 回落 `0`，静默降级为该字段默认值 | `Jsonx.kt:17-18` |
 | 单条 app 不是对象 | 该条被 `continue` 跳过，其他条目照常 | `PolicyCodec.kt:52` |
 | 单条 app 无效（`isEffective=false`） | 解码时从 map 里剔除 | `PolicyCodec.kt:54` |
