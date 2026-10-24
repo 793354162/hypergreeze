@@ -267,10 +267,12 @@ class GreezeFacade(val refs: GreezeRefs) {
 
     fun processesOfUid(uid: Int): List<ProcessRow> {
         val value = call("getProcessByUid", uid) as? Collection<*> ?: return emptyList()
-        return value.mapNotNull { item -> item?.let(::toProcessRow) }
+        return value.mapNotNull { item -> item?.let(::rowOf) }
     }
 
-    private fun toProcessRow(item: Any): ProcessRow? {
+    /** Projects GreeZe's `RunningProcess` (or anything shaped like it) onto [ProcessRow]. */
+    fun rowOf(item: Any?): ProcessRow? {
+        if (item == null) return null
         var pid = 0
         var uid = 0
         var name: String? = null

@@ -3,8 +3,9 @@
 > 目标读者：要验证「到底挂了什么、什么时候生效、失效长什么样」的人。
 > 全部结论来自本仓库代码 + 两份逆向文档：`../../Greeze反射契约.md`（下称**契约**）、`../../LSPosed-Greeze逐App冻结控制模块可行性分析.md`（下称**报告**）。
 > `文件:行` 的文件名省略 `app/src/main/java/dev/hypergreeze/` 前缀；`§` 指上述两份文档的章节。**没有在真机上跑过**，凡是静态分析推不出来的都写「未确证」。
+> **行号基准：commit `d693051`。** 这个仓库在快速迭代，行号可能已有几行漂移；函数名是不变的锚点，冲突时以函数名为准。
 
-Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:515-523`，原样出现在诊断页、`greeze_ctl_heartbeat_v1` 与 hook 日志里。
+Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:561-584`，原样出现在诊断页、`greeze_ctl_heartbeat_v1` 与 hook 日志里。
 
 ---
 
@@ -19,10 +20,11 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:515-523`�
 | `wakeup-list` | `com.miui.server.greeze.AurogonImmobulusMode.isAllowWakeUpList` | `(Ljava/lang/String;)Z` | 先 proceed | 是（boolean） | `immobulusClass` + 方法 |
 | `temp-white` | `com.miui.server.greeze.GreezeManagerService.isTempWhite` | `(Ljava/lang/String;)Z` | 先 proceed | 是（boolean） | manager 上的方法 |
 | `freeze-uid` | `com.miui.server.greeze.GreezeManagerService.freezeUid` | `(IJILjava/lang/String;I)Ljava/lang/String;` | **命中「永不冻结」时根本不 proceed** | 是（返回 `"SKIP_BY_MOD"`） | manager 上的方法 |
+| `freeze-uids` | `com.miui.server.greeze.GreezeManagerService.freezeUids` | `([IJILjava/lang/String;Z)Ljava/util/List;` | **先过滤数组再 proceed**；有 uid 被拦时用改写后的参数 proceed，全被拦时不 proceed | 是（`List`；全拦时返回 `emptyList()`） | manager 上的方法 |
 | `foreground` | `com.miui.server.greeze.GreezeManagerService$13.onForegroundActivitiesChanged` | `(IIZ)V` | 先 proceed | 否（void） | `declaredClasses` 里能扫到 3 参同名方法（契约 §A.8） |
 | `screen-on-thaw` | `com.miui.server.greeze.GreezeManagerService.needThawWhenScreenOn` | `(I)Z` | 先 proceed | 是（boolean） | manager 上的方法；**契约 A 表未收录，很可能 MISSING** |
 
-> 描述符来源：契约 §B（`filter`）、§A.2（`freezeUid`）、§A.4（`isTempWhite`）、§A.8（`$13.onForegroundActivitiesChanged`）、§C（`isNoRestrictApp` / `isAllowWakeUpList`）。`needThawWhenScreenOn(int)` 只出现在报告 §2.8，契约里没有对应 flags 行 → 存在性未确证。
+> 描述符来源：契约 §B（`filter`）、§A.2（`freezeUid` / `freezeUids`）、§A.4（`isTempWhite`）、§A.8（`$13.onForegroundActivitiesChanged`）、§C（`isNoRestrictApp` / `isAllowWakeUpList`）。`needThawWhenScreenOn(int)` 只出现在报告 §2.8，契约里没有对应 flags 行 → 存在性未确证。
 
 ### 0.1 通用装配约定
 
@@ -41,11 +43,11 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:515-523`�
 | 1 | `installInstanceCapture()`（115-138） | `capture-ctor-0…N`、`capture-init` |
 | 2 | `installFilter()`（140-146） | `filter` |
 | 3 | `installWhitelists()`（148-166） | `no-restrict`、`wakeup-list`、`temp-white` |
-| 4 | `installFreezeUid()`（168-174） | `freeze-uid` |
-| 5 | `installForeground()`（176-182） | `foreground` |
-| 6 | `installScreenOnThaw()`（184-190） | `screen-on-thaw` |
+| 4 | `installFreezeUid()`（168-180） | `freeze-uid`、`freeze-uids` |
+| 5 | `installForeground()`（182-188） | `foreground` |
+| 6 | `installScreenOnThaw()`（190-196） | `screen-on-thaw` |
 
-`ORDER`（`HookInstaller.kt:525-534`）是 8 个固定 id 的清单，**不含构造器 hook**；构造器 hook 的 id 由 `"$ID_CAPTURE_CTOR-$index"` 拼出（121-122），`ID_CAPTURE_CTOR` 本身不是完整 id。因此一次启动实际安装的 hook 数是 `8 + 构造器个数`。
+`ORDER`（`HookInstaller.kt:573-583`）是 9 个固定 id 的清单，**不含构造器 hook**；构造器 hook 的 id 由 `"$ID_CAPTURE_CTOR-$index"` 拼出（121-122），`ID_CAPTURE_CTOR` 本身不是完整 id。因此一次启动实际安装的 hook 数是 `9 + 构造器个数`。
 
 ---
 
@@ -60,9 +62,9 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:515-523`�
 
 **拦截语义**
 
-1. `val result = chain.proceed()`（`HookInstaller.kt:195`）——先让构造器正常跑完。
-2. `facade.captureInstance(chain.thisObject, "constructor-hook")`（197）把**被构造的实例**记进门面；`captureInstance` 只在对象不同时写入并记录来源（`greeze/GreezeFacade.kt:43-49`）。
-3. 原样返回 `result`（201）。
+1. `val result = chain.proceed()`（`HookInstaller.kt:201`）——先让构造器正常跑完。
+2. `facade.captureInstance(chain.thisObject, "constructor-hook")`（203）把**被构造的实例**记进门面；`captureInstance` 只在对象不同时写入并记录来源（`greeze/GreezeFacade.kt:43-49`）。
+3. 原样返回 `result`（207）。
 
 存在的理由：契约 §H-4 指出 `getInstance()` 是「为空就 new」的 DCL，早期调用会造僵尸实例；构造器是能最早拿到实例的时机（早于 `init(Context)`，更早于 `Lifecycle.onStart` 里的 `publishBinderService`），且完全不需要触发那个 DCL。
 
@@ -72,9 +74,9 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:515-523`�
 |---|---|
 | `declaredConstructors` 抛异常 | 当成空数组，不装任何构造器 hook，无 MISSING 状态（`HookInstaller.kt:116-120` 的 `catch`） |
 | 单个构造器 hook 抛异常 | 该 id 记 `HookState.ERROR` + note，其它构造器继续（130-133） |
-| body 内 `captureInstance` 抛异常 | `Logx.w` 后返回 `result`，构造照常完成（198-200） |
+| body 内 `captureInstance` 抛异常 | `Logx.w` 后返回 `result`，构造照常完成（204-207） |
 
-**GreeZe 能力缺失（MISSING）时**：构造器 hook 没有 MISSING 状态——解析不到构造器就什么都不装。实例来源仍有三级兜底：`sInstance` 静态字段 → `ServiceManager.getService("greeze")` → `getService()` → 任意同类型静态字段（`GreezeFacade.kt:72-128`）。
+**GreeZe 能力缺失（MISSING）时**：构造器 hook 没有 MISSING 状态——解析不到构造器就什么都不装。实例来源仍有四级兜底：`sInstance` 静态字段 → `ServiceManager.getService("greeze")` → `getService()` → 任意同类型静态字段（`GreezeFacade.kt:72-128`）。
 
 **验证**
 
@@ -82,7 +84,7 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:515-523`�
 adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"capture-ctor-0"[^}]*'
 ```
 
-> `hits` 恒为 0：`bodyConstructor` 不调用 `hit()`（对比 `HookInstaller.kt:432-435`）。看的是 `"state":"installed"` 而不是命中数。
+> `hits` 恒为 0：`bodyConstructor` 不调用 `hit()`（对比 `HookInstaller.kt:474-477`）。看的是 `"state":"installed"` 而不是命中数。
 
 ---
 
@@ -97,14 +99,14 @@ adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"capture-c
 
 **拦截语义**
 
-1. `chain.proceed()`（`HookInstaller.kt:205`）——GreeZe 自己先完成 `init`。
-2. `captureInstance(chain.thisObject, "init-hook")`（207）。
-3. `chain.args` 非空 → `captureContext(chain.getArg(0))`（208）；`captureContext` 只在参数确实是 `Context` 时记录（`GreezeFacade.kt:51-53`）。
-4. 打一行日志：`GreeZe init() observed; instance=… context=…`（209）。
-5. `onGreezeReady?.invoke()`（210）；它由 `ModuleController` 绑成 `main.post { ensureContext() }`（`ModuleController.kt:95`），等于提前一次拿 `Context` 的尝试。
-6. 原样返回 `result`（214）。
+1. `chain.proceed()`（`HookInstaller.kt:211`）——GreeZe 自己先完成 `init`。
+2. `captureInstance(chain.thisObject, "init-hook")`（213）。
+3. `chain.args` 非空 → `captureContext(chain.getArg(0))`（214）；`captureContext` 只在参数确实是 `Context` 时记录（`GreezeFacade.kt:51-53`）。
+4. 打一行日志：`GreeZe init() observed; instance=… context=…`（215）。
+5. `onGreezeReady?.invoke()`（216）；它由 `ModuleController` 绑成 `main.post { ensureContext() }`（`ModuleController.kt:95`），等于提前一次拿 `Context` 的尝试。
+6. 原样返回 `result`（220）。
 
-**失败模式与兜底**：整段（含日志与回调）在一个 `try/catch` 里，异常只 `Logx.w`（211-213），`init` 照常完成、无返回值改写。`Context` 拿不到不影响 hook 生效，只影响策略/遥测通道；`ensureContext` 另有 20×1.5s 重试（`ModuleController.kt:112-123`、`351-355`）。
+**失败模式与兜底**：整段（含日志与回调）在一个 `try/catch` 里，异常只 `Logx.w`（217-219），`init` 照常完成、无返回值改写。`Context` 拿不到不影响 hook 生效，只影响策略/遥测通道；`ensureContext` 另有 20×1.5s 重试（`ModuleController.kt:112-123`、`372-373`）。
 
 **MISSING 行为**：`init` 解析不到 → 状态 `missing`，`onGreezeReady` 永远不触发。此时实例仍可能来自构造器 hook 或 `sInstance` 字段；`Context` 仍会由 `ModuleController.start()` 里的 `main.post { ensureContext() }`（`ModuleController.kt:102`）主动尝试，所以「策略完全不生效」不是必然结果。
 
@@ -131,16 +133,16 @@ adb shell logcat -s HyperGreeze | grep "GreeZe init() observed"
 
 | 步 | 代码 | 动作 |
 |---|---|---|
-| 1 | `HookInstaller.kt:218` | `raw = chain.proceed()` —— GreeZe 先按自己的规则算出 `original` |
-| 2 | 219 | `raw` 不是 `Boolean` → 原样返回 |
-| 3 | 221-223 | 计命中；`passive` 或全局总开关关闭 → 返回 `original` |
-| 4 | 224-225 | `uid = asInt(arg0)`；`pkg = arg1 as? String`，取不到就用 `packageFor(uid)`（uid→包名缓存），再取不到就直接返回 `original` |
-| 5 | 226 | `reason = asInt(arg2)` |
-| 6 | 227 | `verdict = engine.filterVerdict(pkg, reason, original)` |
-| 7 | 228-237 | 只有 `verdict != original` 才写一条事件：`verdict=true` 记 `INFO`，`false` 记 `SKIP`，`detail="filter override"` |
-| 8 | 238 | 返回 `verdict` |
+| 1 | `HookInstaller.kt:224` | `raw = chain.proceed()` —— GreeZe 先按自己的规则算出 `original` |
+| 2 | 225 | `raw` 不是 `Boolean` → 原样返回 |
+| 3 | 227-229 | 计命中；`passive` 或全局总开关关闭 → 返回 `original` |
+| 4 | 230-231 | `uid = asInt(arg0)`；`pkg = arg1 as? String`，取不到就用 `packageFor(uid)`（uid→包名缓存），再取不到就直接返回 `original` |
+| 5 | 232 | `reason = asInt(arg2)` |
+| 6 | 233 | `verdict = engine.filterVerdict(pkg, reason, original)` |
+| 7 | 234-243 | 只有 `verdict != original` 才写一条事件：`verdict=true` 记 `INFO`，`false` 记 `SKIP`，`detail="filter override"` |
+| 8 | 244 | 返回 `verdict` |
 
-`filterVerdict` 的判定表（`module/PolicyEngine.kt:61-79`）：
+`filterVerdict` 的判定表（`module/PolicyEngine.kt:61-86`）：
 
 | 应用策略 | `filter()` 返回值 |
 |---|---|
@@ -150,18 +152,18 @@ adb shell logcat -s HyperGreeze | grep "GreeZe init() observed"
 | `IMMEDIATE` / `CUSTOM`，`reason & maskDrop != 0` | **`true`**（丢掉 GreeZe 自己的豁免） |
 | `IMMEDIATE` / `CUSTOM`，两位都不命中 | `original` |
 
-`true` = 「允许冻结」这一极性来自报告 §2.2，**未上机验证**（见 LIMITS §3）。
+**极性逃生阀**：上表「返回值」是**模块覆写**。`global.filterPolarityInverted = true` 时覆写整体取反（`PolicyEngine.kt:74-83`：先算 `override`，再 `!override`），**系统自己的 `original` 永不被改写**。它只为「`true` = 允许冻结」这一个未上机验证的假设准备（`core/GlobalPolicy.kt:25-31`；诊断页有同名开关，见 POLICY_SCHEMA §4.2）。
 
 **失败模式与兜底**
 
 | 情况 | 行为 |
 |---|---|
-| body 内任意异常 | `hit(id, error=true)` + `Logx.w("filter body failed")` + 返回 `original`（239-243） |
+| body 内任意异常 | `hit(id, error=true)` + `Logx.w("filter body failed")` + 返回 `original`（245-249） |
 | `arg2` 不是 int | `asInt` 返回 0（`module/R.kt:145-151`）→ 位与全部为 0 → 等于 `original` |
 | `getPackageNamesFromUid` 不可用 | `packageFor(uid)` 为空 → 直接 `original`（静默，无事件） |
 | 策略文档损坏 | `PolicyCodec.decode` 返回 `Policy.EMPTY`（`core/PolicyCodec.kt:41-43`）→ 全部 `original` |
 
-**MISSING 行为**：`filter` 解析不到 → 状态 `missing`，`filterClass` 也可能为 null（能力位 `filter=false`，`GreezeProbe.kt:37`）。后果：掩码（keep/drop）与「NEVER 时直接在判定层拒绝」这条路径失效；但 `freeze-uid` 的拦截仍独立存在（见 §7），所以「永不冻结」不会因为 filter 缺失而完全失效。
+**MISSING 行为**：`filter` 解析不到 → 状态 `missing`，`filterClass` 也可能为 null（能力位 `filter=false`，`GreezeProbe.kt:37`）。后果：掩码（keep/drop）与「NEVER 时直接在判定层拒绝」这条路径失效；但 `freeze-uid` / `freeze-uids` 的拦截仍独立存在（§7、§8），所以「永不冻结」不会因为 filter 缺失而完全失效。
 
 **场景位表**（`core/SceneBit.kt:16-49`；名称与位值交叉核对契约 §E）
 
@@ -213,7 +215,7 @@ adb shell logcat -s HyperGreeze | grep "GreeZe init() observed"
 adb shell settings get system greeze_ctl_events_v1 | grep -o '"d":"filter override"' | wc -l
 ```
 
-（事件里的 `pkg` / `r`(reason) / `res`(verdict) 由 `HookInstaller.kt:229-237` 写入；编解码见 `core/TelemetryCodec.kt:107-141`。）
+（事件里的 `pkg` / `r`(reason) / `res`(verdict) 由 `HookInstaller.kt:234-243` 写入；编解码见 `core/TelemetryCodec.kt:107-141`。）
 
 ---
 
@@ -225,9 +227,9 @@ adb shell settings get system greeze_ctl_events_v1 | grep -o '"d":"filter overri
 | 方法 | `isNoRestrictApp(String) → boolean`（契约 §C） |
 | 描述符 | `(Ljava/lang/String;)Z` |
 
-**拦截语义（先 proceed，再改写）**：`raw = proceed()`（`HookInstaller.kt:247`）→ 非 `Boolean` 直接返回（248）→ `passive`/总开关关闭返回 `original`（252）→ 取 `arg0` 作为包名，取不到返回 `original`（253）→ `verdict = engine.whitelistVerdict(pkg, original)`（254）→ 变了才记事件（`detail` = hook id，255-262）→ 返回 `verdict`。
+**拦截语义（先 proceed，再改写）**：`raw = proceed()`（`HookInstaller.kt:253`）→ 非 `Boolean` 直接返回（254）→ `passive`/总开关关闭返回 `original`（258）→ 取 `arg0` 作为包名，取不到返回 `original`（259）→ `verdict = engine.whitelistVerdict(pkg, original)`（260）→ 变了才记事件（`detail` = hook id，261-268）→ 返回 `verdict`（269）。
 
-`whitelistVerdict`（`PolicyEngine.kt:82-91`）：
+`whitelistVerdict`（`PolicyEngine.kt:89-98`）：
 
 | 应用策略 | 返回值 |
 |---|---|
@@ -236,11 +238,11 @@ adb shell settings get system greeze_ctl_events_v1 | grep -o '"d":"filter overri
 | `IMMEDIATE` / `CUSTOM` 且 `maskDrop` 含 `NO_RESTRICT(64)` | `false`（不再享受白名单） |
 | `IMMEDIATE` / `CUSTOM` 其它情况 | `original` |
 
-> 只有 `NO_RESTRICT` 这一位参与判断（`dropsBit(pkg, SceneBit.NO_RESTRICT)`，88 行），其它位对本 hook 无影响。
+> 只有 `NO_RESTRICT` 这一位参与判断（`dropsBit(pkg, SceneBit.NO_RESTRICT)`，94-95 行），其它位对本 hook 无影响。
 
-**失败模式与兜底**：异常 → `hit(error)` + `Logx.w("<id> body failed")` + `original`（264-268）。`arg0` 不是 `String` → 返回 `original`。
+**失败模式与兜底**：异常 → `hit(error)` + `Logx.w("<id> body failed")` + `original`（270-274）。`arg0` 不是 `String` → 返回 `original`。
 
-**MISSING 行为**：`immobulusClass` 为 null 或方法找不到 → 状态 `missing`，能力位 `immobulus=false`（`GreezeProbe.kt:38`）。后果：`NEVER` 少了一条「强制进白名单」的路径，只剩 `filter`（§3）与 `freeze-uid`（§7）两条。
+**MISSING 行为**：`immobulusClass` 为 null 或方法找不到 → 状态 `missing`，能力位 `immobulus=false`（`GreezeProbe.kt:38`）。后果：`NEVER` 少了一条「强制进白名单」的路径，只剩 `filter`（§3）、`freeze-uid`（§7）、`freeze-uids`（§8）。
 
 **验证**
 
@@ -258,16 +260,16 @@ adb shell settings get system greeze_ctl_events_v1 | grep -o '"d":"no-restrict"'
 | 方法 | `isAllowWakeUpList(String) → boolean`（契约 §C；probe 接受 `isAllowWakeupList` 别名，`GreezeProbe.kt:140`） |
 | 描述符 | `(Ljava/lang/String;)Z` |
 
-**拦截语义（先 proceed，再改写）**：与 §4 同构（`HookInstaller.kt:271-285`），但判定函数换成 `wakeUpVerdict`（`PolicyEngine.kt:94-99`）：
+**拦截语义（先 proceed，再改写）**：与 §4 同构（`HookInstaller.kt:277-291`），但判定函数换成 `wakeUpVerdict`（`PolicyEngine.kt:101-106`）：
 
 | 应用策略 | 返回值 |
 |---|---|
 | 无策略 / `FOLLOW` | `original` |
 | 其它任何模式（含 `NEVER`） | `app.thawOn.externalWake ?: original` |
 
-即：这是「允许被外部唤醒」的开关。`externalWake = false` 时返回 `false`（不许被唤醒），`true` 时返回 `true`，未设置则跟随系统。**注意这条不区分 `NEVER`**——代码只排除 `FOLLOW`（97 行）。
+即：这是「允许被外部唤醒」的开关。`externalWake = false` 时返回 `false`（不许被唤醒），`true` 时返回 `true`，未设置则跟随系统。**注意这条不区分 `NEVER`**——代码只排除 `FOLLOW`（104 行）。
 
-**失败模式与兜底**：异常 → `hit(error)` + `Logx.w("wakeup body failed")` + `original`（280-284）。本 hook **不写事件**（没有 `telemetry.record` 调用），只能从命中数看。
+**失败模式与兜底**：异常 → `hit(error)` + `Logx.w("wakeup body failed")` + `original`（286-290）。本 hook **不写事件**（没有 `telemetry.record` 调用），只能从命中数看。
 
 **MISSING 行为**：状态 `missing`，能力位 `immobulus=false`。后果：`thawOn.externalWake` 这个开关在 UI 上仍然可配，但没有任何消费点（策略存了不生效）。
 
@@ -287,7 +289,7 @@ adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"wakeup-li
 | 方法 | `isTempWhite(String) → boolean`（契约 §A.4；probe 接受 `isTempWhiteList` 别名，`GreezeProbe.kt:138`） |
 | 描述符 | `(Ljava/lang/String;)Z` |
 
-**拦截语义**：与 §4 完全共用 `bodyWhitelist`（`HookInstaller.kt:161-165` 装配 → `246-269` 实现），判定表同 `whitelistVerdict`（`NEVER` → `true`；`IMMEDIATE`/`CUSTOM` 且 drop 了 `NO_RESTRICT` → `false`；否则 `original`）。先 `proceed()`，再改写。
+**拦截语义**：与 §4 完全共用 `bodyWhitelist`（`HookInstaller.kt:161-165` 装配 → `252-275` 实现），判定表同 `whitelistVerdict`（`NEVER` → `true`；`IMMEDIATE`/`CUSTOM` 且 drop 了 `NO_RESTRICT` → `false`；否则 `original`）。先 `proceed()`，再改写。
 
 **失败模式与兜底**：同 §4（`original` + 错误计数）。`isTempWhite` 语义是「临时白名单」，名单本身由 GreeZe 维护（`TEST_TEMP_WHITE` 集合，契约 §A.7），模块只覆盖返回值，**不写那个集合**。
 
@@ -313,15 +315,15 @@ adb shell settings get system greeze_ctl_events_v1 | grep -o '"d":"temp-white"'
 
 | 步 | 代码 | 动作 |
 |---|---|---|
-| 1 | `HookInstaller.kt:290` | 计命中 |
-| 2 | 292-295 | 非被动且总开关开：`uid = asInt(arg0)`；`blockedFor = packagesFor(uid).firstOrNull { engine.neverFreeze(it) }` |
-| 3 | 296-299 | 预检查自身异常 → `hit(error)` + `Logx.w("freezeUid pre-check failed")`，`blockedFor` 保持 null（**继续走第 5 步**） |
-| 4 | 300-316 | `blockedFor != null` → **不调用 `chain.proceed()`**，写 `SKIP` 事件（`result = "SKIP_BY_MOD"`，`detail = "never-freeze policy"`），`flushEvents()`，直接 `return "SKIP_BY_MOD"` |
-| 5 | 317 | 其它情况：`result = chain.proceed()` |
-| 6 | 318-333 | `global.audit` 为真时记事件：`result == "OK"` 记 `FREEZE`，否则 `INFO`；`detail = "freezeUid"` |
-| 7 | 334 | 返回 `result` |
+| 1 | `HookInstaller.kt:296` | 计命中 |
+| 2 | 298-301 | 非被动且总开关开：`uid = asInt(arg0)`；`blockedFor = packagesFor(uid).firstOrNull { engine.neverFreeze(it) }` |
+| 3 | 302-305 | 预检查自身异常 → `hit(error)` + `Logx.w("freezeUid pre-check failed")`，`blockedFor` 保持 null（**继续走第 5 步**） |
+| 4 | 306-322 | `blockedFor != null` → **不调用 `chain.proceed()`**，写 `SKIP` 事件（`result = "SKIP_BY_MOD"`，`detail = "never-freeze policy"`），`flushEvents()`，直接 `return "SKIP_BY_MOD"` |
+| 5 | 323 | 其它情况：`result = chain.proceed()` |
+| 6 | 324-340 | `global.audit` 为真时记事件：`result == "OK"` 记 `FREEZE`，否则 `INFO`；`detail = "freezeUid"` |
+| 7 | 341 | 返回 `result` |
 
-第 4 步是整个模块唯一「跳过 proceed」的地方，代码注释写明原因（313-315）：**跳过 `proceed()` 才是真正阻止 cgroup 写入的动作**，返回串只是让 GreeZe 的状态机认为「这次没冻」。
+第 4 步是单 uid 路径上唯一「跳过 proceed」的地方，代码注释写明原因（319-321）：**跳过 `proceed()` 才是真正阻止 cgroup 写入的动作**，返回串只是让 GreeZe 的状态机认为「这次没冻」。
 
 `neverFreeze`（`PolicyEngine.kt:30-31`）= `enabled && mode(pkg, processName) == NEVER`；`NEVER` 的判定只按包名逐个试（`packagesFor(uid)` 是 `getPackageNamesFromUid(uid)` 的结果，共享 uid / 双开多包名时**任一个** `NEVER` 就会拦截）。
 
@@ -330,11 +332,11 @@ adb shell settings get system greeze_ctl_events_v1 | grep -o '"d":"temp-white"'
 | 情况 | 行为 |
 |---|---|
 | 预检查异常 | 不拦截，照常 `proceed()`（保守方向：宁可不拦，也不误伤） |
-| 审计段异常 | 只 `Logx.w("freezeUid audit failed")`，`result` 不受影响（331-333） |
+| 审计段异常 | 只 `Logx.w("freezeUid audit failed")`，`result` 不受影响（337-339） |
 | `getPackageNamesFromUid` 不可用 / 返回空 | `packagesFor` 为空 → `blockedFor` 恒为 null → `NEVER` 静默失效（这条**只**靠 filter/no-restrict/temp-white 兜） |
 | 模块自己发起的冻结 | 同一方法，同样会被本 hook 检查（`forcedFreeze` 只对 `IMMEDIATE` 发起，所以不会被自己拦） |
 
-**MISSING 行为**：状态 `missing`，能力位 `freezeUid=false`（`GreezeProbe.kt:40`）。这是**最致命的一条缺失**：所有「永不冻结」的硬拦截消失（`filter` 只能劝 GreeZe 不要发起，不能阻止已经发起的 `freezeUid` 调用）；`Command.OP_FREEZE_UID` / `OP_FREEZE_PKG` 也失去 `SKIP_BY_MOD` 回执（`ModuleController.kt:275-285`）。
+**MISSING 行为**：状态 `missing`，能力位 `freezeUid=false`（`GreezeProbe.kt:40`）。所有走**单 uid** 路径的「永不冻结」硬拦截消失（`filter` 只能劝 GreeZe 不要发起，不能阻止已经发起的 `freezeUid` 调用）；`Command.OP_FREEZE_UID` / `OP_FREEZE_PKG` 也失去 `SKIP_BY_MOD` 回执（`ModuleController.kt:293-303`）。批量路径的拦截不受影响（§8），因为它是另一个方法。
 
 **验证**
 
@@ -345,7 +347,42 @@ adb shell cat /sys/fs/cgroup/uid_<UID>/cgroup.freeze   # 期望 0（未被冻）
 
 ---
 
-## 8. `foreground` —— 退后台触发器
+## 8. `freeze-uids` —— 批量路径的数组过滤
+
+| 项 | 内容 |
+|---|---|
+| 目标类 | `com.miui.server.greeze.GreezeManagerService` |
+| 方法 | `freezeUids(int[] uids, long delay, int reason, String tag, boolean freezeByUid) → List<Integer>`（契约 §A.2） |
+| 描述符 | `([IJILjava/lang/String;Z)Ljava/util/List;` |
+
+**为什么必须单独挂一个**：`freezeUid` 只覆盖单 uid 入口；`freezeUids` 收数组，可能**逐 uid 直接落 cgroup 而不经过 `freezeUid`**（`HookInstaller.kt:343-351` 的注释）。只在 `freezeUid` 上做判定，批量路径就能绕过「永不冻结」。pid 级入口（`freezePids` / `freezeProcess`）**故意不过滤**：它们只带 pid，没有 uid，按 pid 猜包名就是猜。
+
+**拦截语义（先过滤，再决定用哪份参数 proceed）**
+
+| 步 | 代码 | 动作 |
+|---|---|---|
+| 1 | `HookInstaller.kt:353` | `arg0` 不是 `IntArray` → 直接 `proceed()`（不改写） |
+| 2 | 355 | 计命中 |
+| 3 | 357 | `passive` / 总开关关 / 数组为空 → `proceed()` |
+| 4 | 358 | `kept = uids.filter { uid -> packagesFor(uid).none { engine.neverFreeze(it) } }` |
+| 5 | 359 | 没有一个被拦（`kept.size == uids.size`）→ `proceed()`，零开销路径 |
+| 6 | 360-367 | 有被拦：写一条 `SKIP` 事件（`result = "SKIP_BY_MOD"`，`detail = "freezeUids filtered <拦掉数>/<总数>"`） |
+| 7 | 368 | 全被拦 → **不 proceed**，返回 `emptyList<Int>()`（对调用方等价于「一个都没冻」） |
+| 8 | 369-371 | 部分被拦 → 复制 `chain.args`、把 `args[0]` 换成 `kept.toIntArray()`，用 `chain.proceed(args)` 继续 |
+
+**失败模式与兜底**：整段 `try/catch`（372-376）——异常 → `hit(error)` + `Logx.w("freezeUids body failed")` + **`chain.proceed()`（原样参数）**，即降级为「不拦截」。与 `freeze-uid` 的「宁可不拦」同一个方向。
+
+**MISSING 行为**：状态 `missing`。`GreezeProbe.capabilities()` **没有** `freezeUids` 能力位（只有 `freezePids`/`freezeAction`/`freezeUid`，`GreezeProbe.kt:40-42`），所以只能从 `hooks[].state` 看。后果：批量冻结路径上的 `NEVER` 失效，单 uid 路径不受影响。
+
+**验证**
+
+```bash
+adb shell settings get system greeze_ctl_events_v1 | grep -o '"d":"freezeUids filtered [0-9]*/[0-9]*"'
+```
+
+---
+
+## 9. `foreground` —— 退后台触发器
 
 | 项 | 内容 |
 |---|---|
@@ -356,50 +393,53 @@ adb shell cat /sys/fs/cgroup/uid_<UID>/cgroup.freeze   # 期望 0（未被冻）
 
 **拦截语义（先 proceed，只做触发，不改返回值）**
 
-1. `raw = chain.proceed()`（`HookInstaller.kt:338`）——GreeZe 自己的前台状态机先跑。
-2. 计命中；`passive` 直接返回（340-341）。
-3. `a0 = asInt(arg0)`、`a1 = asInt(arg1)`、`foreground = asBool(arg2, def = true)`（342-344）。默认值 `true` 意味着「第三个参数类型不符时按前台处理」，也就是**不触发**冻结。
-4. `foreground == false` → `uid = resolveUid(a0, a1)`，`pid` 取另一个（346-348）→ `onBackground(uid, pid)`。
-5. 始终返回 `raw`（354）。
+1. `raw = chain.proceed()`（`HookInstaller.kt:380`）——GreeZe 自己的前台状态机先跑。
+2. 计命中；`passive` 直接返回（382-383）。
+3. `a0 = asInt(arg0)`、`a1 = asInt(arg1)`、`foreground = asBool(arg2, def = true)`（384-386）。默认值 `true` 意味着「第三个参数类型不符时按前台处理」，也就是**不触发**冻结。
+4. `foreground == false` → `uid = resolveUid(a0, a1)`，`pid` 取另一个（388-389）→ `onBackground(uid, pid)`（390）。
+5. 始终返回 `raw`（396）。
 
-`onBackground`（376-387）：总开关检查 → `packagesFor(uid).firstOrNull { engine.forceFreezeOnBackground(it) }`（只有 `IMMEDIATE` 模式且 `global.forceFreezeOnBackground` 为真才命中，`PolicyEngine.kt:34-37`）→ `pendingFreeze.add(uid)` 去重（同一 uid 已有排队的任务就不再排）→ `work.postDelayed(task, delayMs)` 投到 `HandlerThread("HyperGreeze")`。
+`onBackground`（418-429）：总开关检查 → `packagesFor(uid).firstOrNull { engine.forceFreezeOnBackground(it) }`（只有 `IMMEDIATE` 模式且 `global.forceFreezeOnBackground` 为真才命中，`PolicyEngine.kt:34-37`）→ `pendingFreeze.add(uid)` 去重（同一 uid 已有排队的任务就不再排）→ `work.postDelayed(task, delayMs)` 投到 `HandlerThread("HyperGreeze")`。
 
-`forcedFreeze`（389-413）依次：`passive`/总开关/模式复查 → `facade.isUidFrozen(uid) == true` 记 `already-frozen` 并退出（393-396）→ 冷却窗口（按 `lastAttempt` 而不是 `getLastThawedTime`，397-404；ARCHITECTURE §4 说明后者单位未确证）→ `applyResources(uid, pkg)`（405）→ `facade.freezeUid(uid, 0L, REASON_MOD=1000, FREEZE_TAG="hypergreeze", 0)`（406）→ 记事件 `detail = "forced pid=<pid>"`（407）。
+`forcedFreeze`（431-455）依次：`passive`/总开关/模式复查 → `facade.isUidFrozen(uid) == true` 记 `already-frozen` 并退出（435-438）→ 冷却窗口（按 `lastAttempt` 而不是 `getLastThawedTime`，439-445；ARCHITECTURE §4 说明后者单位未确证）→ `applyResources(uid, pkg)`（447）→ `facade.freezeUid(uid, 0L, REASON_MOD=1000, FREEZE_TAG="hypergreeze", 0)`（448）→ 记事件 `detail = "forced pid=<pid>"`（449）。
 
-**失败模式与兜底**：body 异常 → `hit(error)` + `Logx.w("foreground body failed")` + 返回 `raw`（350-353）。`forcedFreeze` 整体 `try/catch`（410-412），任务本身跑在 worker 线程，异常不会回到 AMS。`delayMs` 由模块自己的 `postDelayed` 实现，传给 GreeZe 的 `delay` 恒为 `0L`（406）——**GreeZe 的 delay 参数没被使用**。
+**失败模式与兜底**：body 异常 → `hit(error)` + `Logx.w("foreground body failed")` + 返回 `raw`（392-395）。`forcedFreeze` 整体 `try/catch`（452-454），任务本身跑在 worker 线程，异常不会回到 AMS。`delayMs` 由模块自己的 `postDelayed` 实现，传给 GreeZe 的 `delay` 恒为 `0L`（448）——**GreeZe 的 delay 参数没被使用**。
 
 **MISSING 行为**：状态 `missing`，能力位 `foreground=false`（`GreezeProbe.kt:50`）。后果：`IMMEDIATE` 模式的「退后台立即冻结」完全失效（没有触发器），`NEVER`/掩码仍生效；`delayMs`、`thawCooldownMs`、`forceFreezeOnBackground` 一并变成空配置。
 
-**uid/pid 参数顺序未确证**：见 §11。
+**uid/pid 参数顺序未确证**：见 §12。
 
 **验证**
 
 ```bash
 adb shell logcat -s HyperGreeze | grep "foreground callback: uid is"
 adb shell settings get system greeze_ctl_events_v1 | grep -o '"d":"forced pid=[0-9]*"'
+adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"foreground"[^}]*'
 ```
+
+（第三条能看到 `"note":"uid=arg0|arg1|unresolved"`，判定结果已经进心跳，见 §12。）
 
 ---
 
-## 9. `screen-on-thaw` —— 亮屏解冻判定
+## 10. `screen-on-thaw` —— 亮屏解冻判定
 
 | 项 | 内容 |
 |---|---|
 | 目标类 | `com.miui.server.greeze.GreezeManagerService` |
 | 方法 | `needThawWhenScreenOn(int uid) → boolean` |
 | 描述符 | `(I)Z` |
-| 出处 | 只出现在报告 §2.8（「亮屏解冻：`needThawWhenScreenOn(uid)`」）；**契约 §A 的方法表里没有它** → 存在性未确证 |
+| 出处 | 只出现在报告 §2.8(「亮屏解冻：`needThawWhenScreenOn(uid)`」)；**契约 §A 的方法表里没有它** → 存在性未确证 |
 
 **拦截语义（先 proceed，再改写）**
 
-1. `raw = chain.proceed()`（`HookInstaller.kt:358`）；非 `Boolean` 直接返回（359）。
-2. 计命中；`passive`/总开关关闭返回 `original`（361-363）。
-3. `uid = asInt(arg0)`；`packagesFor(uid).firstNotNullOfOrNull { engine.thawTrigger("screenOn", it) } ?: original`（364-367）。
+1. `raw = chain.proceed()`（`HookInstaller.kt:400`）；非 `Boolean` 直接返回（401）。
+2. 计命中；`passive`/总开关关闭返回 `original`（403-405）。
+3. `uid = asInt(arg0)`；`packagesFor(uid).firstNotNullOfOrNull { engine.thawTrigger("screenOn", it) } ?: original`（406-409）。
 4. 返回该值。
 
-即：只覆盖「亮屏时该不该解冻」这一**判定**，**不主动调用 `thawUid`**——真正解冻仍由 GreeZe 执行。`thawTrigger` 是逐包三态（`PolicyEngine.kt:114-125`），`firstNotNullOfOrNull` 取第一个非 null 值：多包名共享 uid 时，**先命中的那个包的设置说了算**。
+即：只覆盖「亮屏时该不该解冻」这一**判定**，**不主动调用 `thawUid`**——真正解冻仍由 GreeZe 执行。`thawTrigger` 是逐包三态（`PolicyEngine.kt:121-132`），`firstNotNullOfOrNull` 取第一个非 null 值：多包名共享 uid 时，**先命中的那个包的设置说了算**。
 
-**失败模式与兜底**：异常 → `hit(error)` + **静默**返回 `original`（368-371，注意这里没有 `Logx.w`，是全部 body 里唯一不写日志的 catch）。
+**失败模式与兜底**：异常 → `hit(error)` + **静默**返回 `original`（410-413，注意这里没有 `Logx.w`，是全部 body 里唯一不写日志的 catch）。
 
 **MISSING 行为**：状态 `missing`。没有独立能力位（`GreezeProbe.capabilities()` 不含该键，35-59），只能从 `hooks[].state` 看。后果：`thawOn.screenOn` 配置无效，亮屏行为回到 GreeZe 原生。
 
@@ -411,28 +451,28 @@ adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"screen-on
 
 ---
 
-## 10. 为什么没有 hook `isRestrictReceiver` / `udpPackageRestrict` / `jobRestrict`
+## 11. 为什么没有 hook `isRestrictReceiver` / `udpPackageRestrict` / `jobRestrict`
 
-这三者在模块里是**动作**，不是**判定点**：`HookInstaller.applyResources(uid, pkg)`（`HookInstaller.kt:420-428`）在「即将强制冻结某个 uid」那一刻调用它们一次，然后才 `freezeUid`。挂 hook 需要「每次调用都要不要改写结果」的语义，而它们没有可改写的东西。
+这三者在模块里是**动作**，不是**判定点**：`HookInstaller.applyResources(uid, pkg)`（`HookInstaller.kt:462-470`）在「即将强制冻结某个 uid」那一刻调用它们一次，然后才 `freezeUid`。挂 hook 需要「每次调用都要不要改写结果」的语义，而它们没有可改写的东西。
 
 | 成员 | 契约里的形态 | 模块里的用法 | 不 hook 的原因 |
 |---|---|---|---|
-| `udpPackageRestrict(int, boolean)` | **private**、`void`（契约 §A.5 [:366]；§H-10 需 `setAccessible`） | `applyResources` → `facade.setUdpRestrict(uid, it)`（`HookInstaller.kt:425`、`GreezeFacade.kt:312`） | 纯 setter，无返回值可改写。它是 per-uid 网络限制的**写入口**，GreeZe 内部自己也调它；hook 它只能旁观系统写状态，反而会和 GreeZe 的网络状态机抢写。模块只在需要「加限制」时调一次，从不解限（`core/ResourceSwitches.kt` 的 KDoc） |
-| `jobRestrict(int)` | public、**返回 `void`**（契约 §A.5 [:480]，注意不是 boolean） | `applyResources` → `facade.setJobRestrict(uid)`（426、`GreezeFacade.kt:307`） | 返回 void → 没有任何「改写返回值」的余地；`callUnit` 的语义只是「invoke 没抛异常」（`GreezeFacade.kt:163-175`），无法判断是否真的生效 |
-| `isRestrictReceiver(Intent, int, String, int, String)` | 包内可见、返回 `boolean`（契约 §A.5 [:470]） | **既没 hook 也没调用**；只在 probe 里记一条 spec（`GreezeProbe.kt:147`），并计入能力位 `resources`（53-58） | 5 个参数里有两个 `int`、两个 `String`，无法唯一确定哪个是包名、哪个是 uid / userId；猜错会影响**全局**广播，而不是单个 App。`HookInstaller.kt:415-419` 的注释就是这个决定 |
+| `udpPackageRestrict(int, boolean)` | **private**、`void`（契约 §A.5 [:366]；§H-10 需 `setAccessible`） | `applyResources` → `facade.setUdpRestrict(uid, it)`（`HookInstaller.kt:467`、`GreezeFacade.kt:312`） | 纯 setter，无返回值可改写。它是 per-uid 网络限制的**写入口**，GreeZe 内部自己也调它；hook 它只能旁观系统写状态，反而会和 GreeZe 的网络状态机抢写。模块只在需要「加限制」时调一次，从不解限（`core/ResourceSwitches.kt` 的 KDoc） |
+| `jobRestrict(int)` | public、**返回 `void`**（契约 §A.5 [:480]，注意不是 boolean） | `applyResources` → `facade.setJobRestrict(uid)`（468、`GreezeFacade.kt:307`） | 返回 void → 没有任何「改写返回值」的余地；`callUnit` 的语义只是「invoke 没抛异常」（`GreezeFacade.kt:163-175`），无法判断是否真的生效 |
+| `isRestrictReceiver(Intent, int, String, int, String)` | 包内可见、返回 `boolean`（契约 §A.5 [:470]） | **既没 hook 也没调用**；只在 probe 里记一条 spec（`GreezeProbe.kt:147`），并计入能力位 `resources`（53-58） | 5 个参数里有两个 `int`、两个 `String`，无法唯一确定哪个是包名、哪个是 uid / userId；猜错会影响**全局**广播，而不是单个 App。`HookInstaller.kt:457-461` 的注释就是这个决定 |
 
 补充两点：
 
-1. 判定层是存在开关位的：`PolicyEngine.resource()` 对 `net`/`alarm`/`job`/`wakelock`/`broadcast`/`cpu` 六项都返回三态（`PolicyEngine.kt:101-112`），但 `applyResources` 只消费 `net`/`job`/`wakelock` 三项（`HookInstaller.kt:425-427`）。`alarm`/`broadcast`/`cpu` 只有 UI 开关，没有落点（见 LIMITS §2）。
-2. `applyResources` 有按 revision 的去重：`resourceAppliedRev[uid] == engine.policy.revision` 时直接返回（422-424），所以同一版本策略下每个 uid 只写一次资源。
+1. 判定层是存在开关位的：`PolicyEngine.resource()` 对 `net`/`alarm`/`job`/`wakelock`/`broadcast`/`cpu` 六项都返回三态（`PolicyEngine.kt:108-119`），但 `applyResources` 只消费 `net`/`job`/`wakelock` 三项（`HookInstaller.kt:467-469`）。`alarm`/`broadcast`/`cpu` 只有 UI 开关，没有落点（见 LIMITS §2）。
+2. `applyResources` 有按 revision 的去重：`resourceAppliedRev[uid] == engine.policy.revision` 时直接返回（465-466），所以同一版本策略下每个 uid 只写一次资源。
 
 ---
 
-## 11. `onForegroundActivitiesChanged` 的 uid/pid 顺序：未确证，用经验法
+## 12. `onForegroundActivitiesChanged` 的 uid/pid 顺序：未确证，用经验法
 
 **已知**：契约 §A.8 只给出描述符 `(IIZ)V`，没给参数语义；§H-8 只说方法在 `$13` 上。AOSP 的 `IProcessObserver.onForegroundActivitiesChanged(int pid, int uid, boolean foregroundActivities)` 是 `(pid, uid, fg)`，但 GreeZe 的匿名实现**没有义务**保持这个顺序（`HookInstaller.kt:59-63` 的注释）。
 
-**代码的实际做法**：`resolveUid(a0, a1)`（`HookInstaller.kt:450-470`）
+**代码的实际做法**：`resolveUid(a0, a1)`（`HookInstaller.kt:492-512`）
 
 | 顺序 | 条件 | 判定 | 是否写缓存 |
 |---|---|---|---|
@@ -442,15 +482,16 @@ adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"screen-on
 | 4 | 只有 `a1` 能解析出包名 | uid = `a1` | `uidArgIndex = 1` |
 | 5 | 都能 / 都不能 | uid = `a1`（AOSP 顺序 `(pid, uid, fg)` 的回退） | 不写缓存 |
 
-「能解析出包名」= `packagesFor(x)` 非空，即 `getPackageNamesFromUid(x)` 返回了至少一个包（`GreezeProbe.kt:133`、`GreezeFacade.kt:259-266`）。`uidArgIndex` 是 `@Volatile`，一旦落定在整个进程生命周期内不再变（65 行），日志里留一行 `foreground callback: uid is arg0/arg1`（459、464）。
+「能解析出包名」= `packagesFor(x)` 非空，即 `getPackageNamesFromUid(x)` 返回了至少一个包（`GreezeProbe.kt:133`、`GreezeFacade.kt:259-266`）。`uidArgIndex` 是 `@Volatile`，一旦落定在整个进程生命周期内不再变（64-65 行）。
+
+**判定结果去哪看**：`snapshot()` 给 `foreground` 的 note 附加 `uid=arg0|arg1|unresolved`（`HookInstaller.kt:516-533`，`uidArgDecision()` 在 551-555），所以诊断页与 `greeze_ctl_heartbeat_v1` 都能读到；logcat 另有一行 `foreground callback: uid is arg0/arg1`（501、506）。被动模式下 note 会被 `"safe mode: passive"` 覆盖（523-527）。
 
 **这个经验法的风险**
 
 | 风险 | 说明 |
 |---|---|
-| 顺序其实是 `(uid, pid, fg)` 但两边都解析不出包名 | 会走第 5 条，把 `pid` 当 uid 传给 `freezeUid(pid, …)` → 冻结目标错误或直接失败。真正的缓解是「只有 `IMMEDIATE` 策略的包才会走到写操作」（`onBackground` 379 行先按包名过策略），未配置的 App 不受影响 |
-| pid 恰好等于某个能解析出包名的 uid | 第 3/4 条会误判并**永久缓存**错误结论，直到进程重启（`invalidateUidCache()` 只清包名缓存，`HookInstaller.kt:510-512`） |
+| 顺序其实是 `(uid, pid, fg)` 但两边都解析不出包名 | 会走第 5 条，把 `pid` 当 uid 传给 `freezeUid(pid, …)` → 冻结目标错误或直接失败。真正的缓解是「只有 `IMMEDIATE` 策略的包才会走到写操作」（`onBackground` 421 行先按包名过策略），未配置的 App 不受影响 |
+| pid 恰好等于某个能解析出包名的 uid | 第 3/4 条会误判并**永久缓存**错误结论，直到进程重启（`invalidateUidCache()` 只清包名缓存，`HookInstaller.kt:557-559`） |
 | `getPackageNamesFromUid` 缺失（能力位 `packagesOfUid=false`） | 两边都空 → 永远走 AOSP 回退；对 `(pid, uid, fg)` 的 ROM 正确，对反过来的是错的 |
-| 判定结果没进心跳 | `uidArgDecision()`（504-508）存在，但 `Heartbeat` 里没有对应字段（`ModuleController.publishHeartbeat()` 212-238 只放 hooks 与 capabilities）→ **诊断页看不到**，只能抓 logcat |
 
-正确做法（未做）：在真机上对一次已知前台切换抓一条 `logcat` + 对比 `dumpsys activity` 的 pid/uid，把结论写死；目前代码刻意保留运行时自适应。
+正确做法（未做）：在真机上对一次已知前台切换抓一条 `logcat` + 对比 `dumpsys activity` 的 pid/uid，把结论写死；目前代码刻意保留运行时自适应，并把判定结果放进心跳让人能发现它选错了。

@@ -144,8 +144,34 @@ class ModuleController(
 
         consumeSafeModeRequest(tm)
         registerObservers(ctx)
+        applyGlobalSideEffects(policyStore.engine)
+        tm.record(
+            EventType.BOOT,
+            result = "boot",
+            detail = "hooks=${installer?.snapshot()?.count { it.state == HookState.INSTALLED } ?: 0}",
+        )
         publishHeartbeat()
         work?.post { processCommand() }
+    }
+
+    /**
+     * Global switches that have a real GreeZe-side effect. All three are opt-in (`null` / `false`
+     * by default) so a stock install never touches a system-wide switch on its own.
+     */
+    private fun applyGlobalSideEffects(engine: PolicyEngine) {
+        val global = engine.policy.global
+        telemetry?.eventCap = if (global.compactEvents) COMPACT_EVENT_CAP else Module.EVENT_RING
+        global.applyFreezeBinder?.let { desired ->
+            work?.post {
+                val ok = facade?.setFreezeBinderEnabled(desired) == true
+                telemetry?.record(
+                    EventType.INFO,
+                    result = if (ok) "ok" else "fail",
+                    detail = "setFreezeBinderEnableCloud($desired)",
+                )
+            }
+        }
+        if (global.patchLists) work?.post { applyLists() }
     }
 
     /**
@@ -217,6 +243,7 @@ class ModuleController(
         }
         if (policyStore.policy.revision != lastRevision) {
             lastRevision = policyStore.policy.revision
+            applyGlobalSideEffects(policyStore.engine)
             publishHeartbeat()
         }
         // Dirty-guarded: writing nothing when nothing changed, so a 5s cadence costs one lock.
@@ -283,12 +310,19 @@ class ModuleController(
 
     private fun execute(command: Command): String {
         val greeze = facade ?: return "no-greeze"
+        val tm = telemetry
         return when (command.op) {
-            Command.OP_THAW_ALL, Command.OP_RESET_CGROUP ->
-                if (greeze.thawAll()) "ok" else "fail"
+            Command.OP_THAW_ALL, Command.OP_RESET_CGROUP -> {
+                val ok = greeze.thawAll()
+                tm?.record(EventType.THAW, result = if (ok) "ok" else "fail", detail = command.op)
+                if (ok) "ok" else "fail"
+            }
 
-            Command.OP_THAW_UID ->
-                if (greeze.thawUid(command.uid)) "ok" else "fail"
+            Command.OP_THAW_UID -> {
+                val ok = greeze.thawUid(command.uid)
+                tm?.record(EventType.THAW, command.uid, command.pkg, result = if (ok) "ok" else "fail")
+                if (ok) "ok" else "fail"
+            }
 
             Command.OP_FREEZE_UID ->
                 greeze.freezeUid(command.uid, 0L, Module.REASON_MOD, Module.FREEZE_TAG, 0) ?: "fail"
@@ -371,5 +405,6 @@ class ModuleController(
         const val HEARTBEAT_EVERY_TICKS = 6L
         const val CONTEXT_RETRY_MS = 1_500L
         const val MAX_CONTEXT_ATTEMPTS = 20
+        const val COMPACT_EVENT_CAP = 20
     }
 }

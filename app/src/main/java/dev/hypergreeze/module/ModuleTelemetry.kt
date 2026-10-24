@@ -34,6 +34,10 @@ class ModuleTelemetry(private val context: Context) {
     @Volatile
     private var lastHeartbeat: Heartbeat? = null
 
+    /** Ring size, lowered by `global.compactEvents` to keep Settings writes small. */
+    @Volatile
+    var eventCap: Int = Module.EVENT_RING
+
     val heartbeat: Heartbeat? get() = lastHeartbeat
 
     fun loadExistingEvents() {
@@ -63,7 +67,7 @@ class ModuleTelemetry(private val context: Context) {
     fun record(event: EventRecord) {
         synchronized(lock) {
             events.addLast(event)
-            while (events.size > Module.EVENT_RING) events.removeFirst()
+            while (events.size > eventCap) events.removeFirst()
             eventsDirty = true
         }
     }

@@ -177,6 +177,46 @@ class HookInstaller(
             "GreezeManagerService.freezeUids(int[],long,int,String,boolean):List",
             refs.m("freezeUids"),
         ) { chain -> bodyFreezeUids(chain) }
+
+        install(
+            ID_FREEZE_PROCESS,
+            "GreezeManagerService.freezeProcess(RunningProcess,long,int,String):boolean",
+            refs.m("freezeProcess"),
+        ) { chain -> bodyFreezeProcess(chain) }
+    }
+
+    /**
+     * The only freeze path that carries a *process name*, so it is also the only place where the
+     * per-process overrides (`AppPolicy.processes`) can actually be honoured.
+     */
+    private fun bodyFreezeProcess(chain: Chain): Any? {
+        var blocked: dev.hypergreeze.core.ProcessRow? = null
+        try {
+            hit(ID_FREEZE_PROCESS)
+            val engine = engineProvider()
+            if (!passive && engine.enabled) {
+                val row = facade.rowOf(chain.getArg(0))
+                if (row != null) {
+                    val pkg = packageFor(row.uid)
+                    if (pkg != null && engine.neverFreeze(pkg, row.name)) blocked = row
+                }
+            }
+        } catch (t: Throwable) {
+            hit(ID_FREEZE_PROCESS, error = true)
+            Logx.w("freezeProcess pre-check failed", t)
+        }
+        val row = blocked
+        if (row != null) {
+            telemetry?.record(
+                type = EventType.SKIP,
+                uid = row.uid,
+                pkg = row.name,
+                result = Module.RESULT_SKIP_BY_MOD,
+                detail = "process override never",
+            )
+            return false
+        }
+        return chain.proceed()
     }
 
     private fun installForeground() {
@@ -567,6 +607,7 @@ class HookInstaller(
         const val ID_TEMP_WHITE = "temp-white"
         const val ID_FREEZE_UID = "freeze-uid"
         const val ID_FREEZE_UIDS = "freeze-uids"
+        const val ID_FREEZE_PROCESS = "freeze-process"
         const val ID_FOREGROUND = "foreground"
         const val ID_SCREEN_ON = "screen-on-thaw"
 
@@ -578,6 +619,7 @@ class HookInstaller(
             ID_TEMP_WHITE,
             ID_FREEZE_UID,
             ID_FREEZE_UIDS,
+            ID_FREEZE_PROCESS,
             ID_FOREGROUND,
             ID_SCREEN_ON,
         )
