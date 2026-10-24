@@ -59,6 +59,8 @@ fun HomePage(
     onClearSafeMode: () -> Unit,
     onRequestSafeMode: () -> Unit,
     onOpenManager: () -> Unit,
+    onOpenRevert: () -> Unit,
+    onOpenClearData: () -> Unit,
 ) {
     val colors = MiuixTheme.colors
     val hb = state.heartbeat
@@ -302,6 +304,34 @@ fun HomePage(
                             }
                         }
                     }
+                }
+            }
+        }
+
+        item(key = "journal") {
+            SectionLabel("模块改动 · 可还原")
+            Block {
+                MiuixCard {
+                    MiuixRow(
+                        title = "还原模块做过的改动",
+                        subtitle = when {
+                            state.journal.isEmpty() -> "账本为空：模块还没改过系统里的东西"
+                            state.undoable.isEmpty() -> "有 ${state.irreversible.size} 项不可还原的记录"
+                            else -> state.undoable.take(3).joinToString("、") { it.op.label } +
+                                if (state.undoable.size > 3) "…" else ""
+                        },
+                        value = if (state.undoable.isEmpty()) "—" else "${state.undoable.size} 项",
+                        valueColor = if (state.undoable.isEmpty()) colors.textHint else colors.success,
+                        onClick = onOpenRevert,
+                        showArrow = true,
+                    )
+                    MiuixDivider()
+                    MiuixRow(
+                        title = "彻底清理（卸载前）",
+                        subtitle = "还原 + 删除模块写入的全部设置键与属性",
+                        onClick = onOpenClearData,
+                        showArrow = true,
+                    )
                 }
             }
         }

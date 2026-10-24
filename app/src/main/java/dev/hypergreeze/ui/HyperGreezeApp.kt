@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.hypergreeze.core.Command
 import dev.hypergreeze.ui.components.HgIcons
+import dev.hypergreeze.ui.components.MiuixBottomSheet
 import dev.hypergreeze.ui.components.MiuixSnackbar
 import dev.hypergreeze.ui.components.MiuixTabBar
 import dev.hypergreeze.ui.pages.AppDetailPage
@@ -29,6 +30,7 @@ import dev.hypergreeze.ui.pages.AppsPage
 import dev.hypergreeze.ui.pages.DiagnosticsPage
 import dev.hypergreeze.ui.pages.EventsPage
 import dev.hypergreeze.ui.pages.HomePage
+import dev.hypergreeze.ui.pages.RevertSheetContent
 import dev.hypergreeze.ui.theme.HyperGreezeTheme
 import dev.hypergreeze.ui.theme.MiuixTheme
 import dev.hypergreeze.ui.vm.MainViewModel
@@ -48,6 +50,7 @@ fun HyperGreezeApp(vm: MainViewModel) {
         val context = LocalContext.current
         var tab by rememberSaveable { mutableStateOf(0) }
         var detailPkg by rememberSaveable { mutableStateOf<String?>(null) }
+        var sheet by rememberSaveable { mutableStateOf(0) }
         var message by remember { mutableStateOf<String?>(null) }
 
         LaunchedEffect(vm) {
@@ -113,6 +116,8 @@ fun HyperGreezeApp(vm: MainViewModel) {
                                     vm.notifyManagerMissing()
                                 }
                             },
+                            onOpenRevert = { sheet = 1 },
+                            onOpenClearData = { sheet = 2 },
                         )
 
                         tab == 1 -> AppsPage(
@@ -157,6 +162,26 @@ fun HyperGreezeApp(vm: MainViewModel) {
                 ) {
                     MiuixSnackbar(snack)
                 }
+            }
+
+            MiuixBottomSheet(
+                visible = sheet != 0,
+                title = if (sheet == 2) "彻底清理" else "还原模块改动",
+                onDismiss = { sheet = 0 },
+            ) {
+                RevertSheetContent(
+                    state = state,
+                    clearData = sheet == 2,
+                    onConfirm = {
+                        val clearing = sheet == 2
+                        sheet = 0
+                        // Pause the module locally as well: the hook side latches `suppressed`, but
+                        // an explicit "off" is what the user asked for by pressing revert.
+                        vm.setGlobal { g -> g.copy(enabled = false) }
+                        if (clearing) vm.clearAllData() else vm.revertAll()
+                    },
+                    onClose = { sheet = 0 },
+                )
             }
         }
 

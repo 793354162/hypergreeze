@@ -37,16 +37,26 @@ data class UiState(
     val heartbeat: Heartbeat? = null,
     val events: List<EventRecord> = emptyList(),
     val logs: List<String> = emptyList(),
+    val journal: List<dev.hypergreeze.core.JournalEntry> = emptyList(),
     val apps: List<AppEntry> = emptyList(),
     val canWriteSettings: Boolean = false,
     val heartbeatAgeMs: Long = Long.MAX_VALUE,
-    val frozenKnown: Int = 0,
 ) {
     val hookAlive: Boolean get() = heartbeat != null && heartbeatAgeMs < 120_000L
     val safeMode: Boolean get() = heartbeat?.safeMode == true
     val configuredCount: Int get() = policy.apps.count { it.value.isEffective }
     val neverCount: Int get() = policy.apps.count { it.value.mode == FreezeMode.NEVER }
     val immediateCount: Int get() = policy.apps.count { it.value.mode == FreezeMode.IMMEDIATE }
+
+    /** Entries the hook side can actually undo right now. */
+    val undoable: List<dev.hypergreeze.core.JournalEntry>
+        get() = journal.filter { it.ok && it.op.reversible }
+
+    /** Entries it knowingly cannot undo (void setters, mode triggers). */
+    val irreversible: List<dev.hypergreeze.core.JournalEntry>
+        get() = journal.filter { it.ok && !it.op.reversible }
+
+    val expertMode: Boolean get() = policy.global.uiExpert
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -63,6 +73,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var pollJob: Job? = null
     private var lastEventsRaw: String? = null
     private var lastLogsRaw: String? = null
+    private var lastJournalRaw: String? = null
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -103,6 +114,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // thread is wasted work when nothing changed (which is the normal case).
         val eventsRaw = gateway.readRaw(Keys.EVENTS)
         val logsRaw = gateway.readRaw(Keys.LOGS)
+        val journalRaw = gateway.readRaw(Keys.JOURNAL)
         val current = _state.value
         val events = if (eventsRaw == lastEventsRaw) {
             current.events
@@ -114,14 +126,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             TelemetryCodec.decodeLogs(logsRaw)
         }
+        val journal = if (journalRaw == lastJournalRaw) {
+            current.journal
+        } else {
+            dev.hypergreeze.core.JournalCodec.decode(journalRaw).asReversed()
+        }
         lastEventsRaw = eventsRaw
         lastLogsRaw = logsRaw
+        lastJournalRaw = journalRaw
         val age = hb?.ts?.takeIf { it > 0 }?.let { System.currentTimeMillis() - it } ?: Long.MAX_VALUE
         _state.update {
             it.copy(
                 heartbeat = hb,
                 events = events,
                 logs = logs,
+                journal = journal,
                 heartbeatAgeMs = age,
             )
         }
@@ -273,6 +292,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearSafeMode() = send(Command.OP_CLEAR_SAFE_MODE)
 
     fun applyLists() = send(Command.OP_APPLY_LISTS)
+
+    /** Undo every journaled side effect, thaw everything, stop re-applying. Policy is kept. */
+    fun revertAll() = send(Command.OP_REVERT_ALL)
+
+    /** Revert + delete every Settings key and system property this module owns (for uninstall). */
+    fun clearAllData() = send(Command.OP_CLEAR_DATA)
 
     fun setFreezeBinder(enabled: Boolean) = send(Command.OP_SET_BINDER, arg = if (enabled) "1" else "0")
 

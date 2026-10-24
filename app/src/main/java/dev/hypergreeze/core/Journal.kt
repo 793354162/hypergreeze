@@ -88,13 +88,14 @@ data class JournalEntry(
      *
      * `uid` 只在 [target] 里还没写过同一个 uid 时才补：调用方有的地方把 uid 塞进 target
      * （`"com.x (u10123)"`）、有的地方只填 [uid] 字段，两种都用时不能出现 `(u10123) (u10123)`。
+     * 两种历史写法 `(u10123)` 和 `(uid 10123)` 都认（[target] 里的括号写法是调用方的自由）。
      */
     val oneLine: String
         get() = buildString {
             append(clock(ts))
             append(' ').append(op.label)
             if (target.isNotBlank()) append(' ').append(target)
-            if (uid != 0 && !target.endsWith("(u$uid)")) append(" (u").append(uid).append(')')
+            if (uid != 0 && !hasUidSuffix(target, uid)) append(" (u").append(uid).append(')')
             if (after != null) append(' ').append(before ?: "?").append('→').append(after)
             append(if (ok) " ok" else " fail")
             if (!note.isNullOrBlank()) append(" — ").append(note)
@@ -114,6 +115,10 @@ private fun clock(ts: Long): String {
 }
 
 private fun pad2(value: Int): String = if (value < 0) "00" else if (value < 10) "0$value" else value.toString()
+
+/** [JournalEntry.target] 里是否已经写过这个 uid；`(u10123)` 和 `(uid 10123)` 两种写法都算。 */
+private fun hasUidSuffix(target: String, uid: Int): Boolean =
+    target.endsWith("(u$uid)") || target.endsWith("(uid $uid)")
 
 /** 「这一行现在能不能反做」的唯一判据，别在调用点各写一遍。 */
 private val JournalEntry.undoable: Boolean get() = ok && op.reversible

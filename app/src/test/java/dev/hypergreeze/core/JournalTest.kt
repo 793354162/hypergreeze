@@ -292,5 +292,10 @@ class JournalTest {
         val dedup = JournalEntry(op = EffectOp.NET_RESTRICT, target = "com.x (u10123)", uid = 10123)
         assertTrue(dedup.oneLine.contains("com.x (u10123)"))
         assertFalse(dedup.oneLine.contains("(u10123) (u10123)"))
+
+        // Effector.targetOf 用的是 "(uid 10123)" 这种括号写法，同样不该被补第二遍
+        val effectorStyle = JournalEntry(op = EffectOp.FREEZE, target = "com.x (uid 10123)", uid = 10123)
+        assertFalse(effectorStyle.oneLine.contains("(uid 10123) (u10123)"))
+        assertTrue(effectorStyle.oneLine.contains("com.x (uid 10123)"))
     }
 }
