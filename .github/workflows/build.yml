@@ -70,6 +70,9 @@ jobs:
       - name: Assemble
         run: ./gradlew :app:assembleRelease :app:assembleDebug --stacktrace
 
+      - name: Unit tests (policy engine / codec / mask)
+        run: ./gradlew :app:testReleaseUnitTest --stacktrace
+
       - name: Report signing certificate
         run: |
           set -eu
@@ -89,6 +92,7 @@ jobs:
             app/build/outputs/apk/release/*.apk
             app/build/outputs/apk/debug/*.apk
             signing.txt
+            app/build/reports/tests/**
           if-no-files-found: error
 
       - name: Stage versioned release asset

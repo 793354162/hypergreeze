@@ -111,4 +111,9 @@ dependencies {
     implementation(libs.compose.foundation)
 
     debugImplementation(libs.compose.ui.tooling)
+
+    // Pure-JVM tests for the policy layer. The real org.json artifact replaces the android.jar
+    // stub so PolicyCodec runs exactly as it does inside system_server.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
