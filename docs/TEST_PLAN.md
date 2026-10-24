@@ -141,7 +141,7 @@
     adb shell settings get system greeze_ctl_heartbeat_v1 | jq '{ts,api,greeze,instance,revision,lastSeq,safeMode,bootGuard}'
     ```
 
-- [ ] **2.3 诊断页 8 个 hook 全部 installed**
+- [ ] **2.3 诊断页 10 个 hook 全部 installed**
   - 操作：UI → 「诊断」页，看钩子列表；或直接解心跳
     ```bash
     adb shell settings get system greeze_ctl_heartbeat_v1 \

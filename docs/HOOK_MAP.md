@@ -21,6 +21,7 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:561-584`�
 | `temp-white` | `com.miui.server.greeze.GreezeManagerService.isTempWhite` | `(Ljava/lang/String;)Z` | 先 proceed | 是（boolean） | manager 上的方法 |
 | `freeze-uid` | `com.miui.server.greeze.GreezeManagerService.freezeUid` | `(IJILjava/lang/String;I)Ljava/lang/String;` | **命中「永不冻结」时根本不 proceed** | 是（返回 `"SKIP_BY_MOD"`） | manager 上的方法 |
 | `freeze-uids` | `com.miui.server.greeze.GreezeManagerService.freezeUids` | `([IJILjava/lang/String;Z)Ljava/util/List;` | **先过滤数组再 proceed**；有 uid 被拦时用改写后的参数 proceed，全被拦时不 proceed | 是（`List`；全拦时返回 `emptyList()`） | manager 上的方法 |
+| `freeze-process` | `com.miui.server.greeze.GreezeManagerService.freezeProcess` | `(Lcom/miui/server/greeze/RunningProcess;JILjava/lang/String;)Z`（参数类型以实际声明为准） | **命中进程级「永不冻结」时不 proceed** | 是（返回 `false`） | manager 上的方法 + `RunningProcess` 可反射读出 uid/processName |
 | `foreground` | `com.miui.server.greeze.GreezeManagerService$13.onForegroundActivitiesChanged` | `(IIZ)V` | 先 proceed | 否（void） | `declaredClasses` 里能扫到 3 参同名方法（契约 §A.8） |
 | `screen-on-thaw` | `com.miui.server.greeze.GreezeManagerService.needThawWhenScreenOn` | `(I)Z` | 先 proceed | 是（boolean） | manager 上的方法；**契约 A 表未收录，很可能 MISSING** |
 
@@ -34,7 +35,7 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:561-584`�
 | 优先级 | `HookInstaller.kt:98` | `setPriority(PRIORITY_DEFAULT)`，不与其他模块抢序 |
 | 异常模式 | `HookInstaller.kt:99` | `ExceptionMode.PROTECTIVE`；按 libxposed API 102 的 javadoc（`.probe/src/io/github/libxposed/api/XposedInterface.java`）：`proceed()` **之前**抛异常 → 框架「当作没这个 hook」继续；`proceed()` **之后**抛异常 → 用 proceed 的结果作为返回；`proceed()` 自己抛的异常照常传播。模块在所有 body 里已经自己 try/catch，这层是第二道保险 |
 | id | `HookInstaller.kt:100` | `.setId(id)`，用于诊断与热重载定位 |
-| 被动模式 | `HookInstaller.kt:49`、`ModuleController.kt:94` | `passive=true` 时 hook 照样装（诊断页能解释「为什么我是被动」），但每个 body 都在改判之前就返回原始结果（`original` 或 `raw`） |
+| 被动模式 | `HookInstaller.kt:49`、`ModuleController.kt:95` | `passive=true` 时 hook 照样装（诊断页能解释「为什么我是被动」），但每个 body 都在改判之前就返回原始结果（`original` 或 `raw`） |
 
 安装顺序（`HookInstaller.install()`，`HookInstaller.kt:74-82`）：
 
@@ -43,11 +44,11 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:561-584`�
 | 1 | `installInstanceCapture()`（115-138） | `capture-ctor-0…N`、`capture-init` |
 | 2 | `installFilter()`（140-146） | `filter` |
 | 3 | `installWhitelists()`（148-166） | `no-restrict`、`wakeup-list`、`temp-white` |
-| 4 | `installFreezeUid()`（168-180） | `freeze-uid`、`freeze-uids` |
+| 4 | `installFreezeUid()` | `freeze-uid`、`freeze-uids`、`freeze-process` |
 | 5 | `installForeground()`（182-188） | `foreground` |
 | 6 | `installScreenOnThaw()`（190-196） | `screen-on-thaw` |
 
-`ORDER`（`HookInstaller.kt:573-583`）是 9 个固定 id 的清单，**不含构造器 hook**；构造器 hook 的 id 由 `"$ID_CAPTURE_CTOR-$index"` 拼出（121-122），`ID_CAPTURE_CTOR` 本身不是完整 id。因此一次启动实际安装的 hook 数是 `9 + 构造器个数`。
+`ORDER`（`HookInstaller.kt` 的 companion）是 10 个固定 id 的清单，**不含构造器 hook**；构造器 hook 的 id 由 `"$ID_CAPTURE_CTOR-$index"` 拼出，`ID_CAPTURE_CTOR` 本身不是完整 id。因此一次启动实际安装的 hook 数是 `10 + 构造器个数`。
 
 ---
 
@@ -103,12 +104,12 @@ adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"capture-c
 2. `captureInstance(chain.thisObject, "init-hook")`（213）。
 3. `chain.args` 非空 → `captureContext(chain.getArg(0))`（214）；`captureContext` 只在参数确实是 `Context` 时记录（`GreezeFacade.kt:51-53`）。
 4. 打一行日志：`GreeZe init() observed; instance=… context=…`（215）。
-5. `onGreezeReady?.invoke()`（216）；它由 `ModuleController` 绑成 `main.post { ensureContext() }`（`ModuleController.kt:95`），等于提前一次拿 `Context` 的尝试。
+5. `onGreezeReady?.invoke()`（216）；它由 `ModuleController` 绑成 `main.post { ensureContext() }`（`ModuleController.kt:96`），等于提前一次拿 `Context` 的尝试。
 6. 原样返回 `result`（220）。
 
-**失败模式与兜底**：整段（含日志与回调）在一个 `try/catch` 里，异常只 `Logx.w`（217-219），`init` 照常完成、无返回值改写。`Context` 拿不到不影响 hook 生效，只影响策略/遥测通道；`ensureContext` 另有 20×1.5s 重试（`ModuleController.kt:112-123`、`372-373`）。
+**失败模式与兜底**：整段（含日志与回调）在一个 `try/catch` 里，异常只 `Logx.w`（217-219），`init` 照常完成、无返回值改写。`Context` 拿不到不影响 hook 生效，只影响策略/遥测通道；`ensureContext` 另有 20×1.5s 重试（`ModuleController.kt:113-124`、`372-373`）。
 
-**MISSING 行为**：`init` 解析不到 → 状态 `missing`，`onGreezeReady` 永远不触发。此时实例仍可能来自构造器 hook 或 `sInstance` 字段；`Context` 仍会由 `ModuleController.start()` 里的 `main.post { ensureContext() }`（`ModuleController.kt:102`）主动尝试，所以「策略完全不生效」不是必然结果。
+**MISSING 行为**：`init` 解析不到 → 状态 `missing`，`onGreezeReady` 永远不触发。此时实例仍可能来自构造器 hook 或 `sInstance` 字段；`Context` 仍会由 `ModuleController.start()` 里的 `main.post { ensureContext() }`（`ModuleController.kt:103`）主动尝试，所以「策略完全不生效」不是必然结果。
 
 **验证**
 
@@ -382,7 +383,31 @@ adb shell settings get system greeze_ctl_events_v1 | grep -o '"d":"freezeUids fi
 
 ---
 
-## 9. `foreground` —— 退后台触发器
+## 8.1 `freeze-process` —— 唯一能看见「进程名」的冻结入口
+
+**目标**：`GreezeManagerService.freezeProcess(RunningProcess, long, int, String): boolean`（契约 §A.2）。
+
+**为什么需要它**：这是四条冻结路径里**唯一带进程名**的一条。`freezeUid` 只有 uid、`freezeUids` 只有 uid 数组、`freezePids` 只有 pid；只有 `freezeProcess` 拿到的是 `RunningProcess`，而它里面有 `uid` 和 `processName`。因此 `apps[].processes`（子进程例外）只在**这条路径**上真正生效。
+
+**语义**：
+
+| 步骤 | 行为 |
+|---|---|
+| 1 | `chain.getArg(0)` 交给 `GreezeFacade.rowOf()`，反射读 `pid` / `uid` / `*ProcessName*` 三个字段（字段名跨版本可能不同，所以按名字模糊匹配） |
+| 2 | 读不出 `processName` → 视为「认不出」，**直接 proceed**，不改写 |
+| 3 | 用 `uid` 反查包名（`getPackageNamesFromUid`），再调 `engine.neverFreeze(pkg, processName)`；该方法先查 `processes[processName]`，没有才回落到 app 级 `mode` |
+| 4 | 命中 → 直接 `return false`，**不调 proceed**（即不冻结这个进程），事件记为 `skip` + `"process override never"` |
+| 5 | 未命中或任何异常 → `chain.proceed()` |
+
+**注意**：`freezePids(int[], …)` 仍然没有过滤——它只有 pid，没有 uid/进程名，反查需要额外枚举，猜错就是把别人的进程冻住。这一条是**设计边界**，不是漏做。
+
+**失败模式**：`RunningProcess` 的字段名如果全变了，`rowOf` 返回 null → 这个 hook 变成纯透传（等价于没装），诊断页仍显示 `installed` 且 `hits` 会增长，需要看 `errors` 与事件里的 detail 来判断是不是在空转。
+
+**验证**：给微信配 `"com.tencent.mm:push": "never"`，然后 `adb shell logcat -s HyperGreeze | grep freeze-process`，或看事件流里是否出现 `skip … process override never`。
+
+---
+
+
 
 | 项 | 内容 |
 |---|---|
@@ -428,7 +453,7 @@ adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"foregroun
 | 目标类 | `com.miui.server.greeze.GreezeManagerService` |
 | 方法 | `needThawWhenScreenOn(int uid) → boolean` |
 | 描述符 | `(I)Z` |
-| 出处 | 只出现在报告 §2.8(「亮屏解冻：`needThawWhenScreenOn(uid)`」)；**契约 §A 的方法表里没有它** → 存在性未确证 |
+| 出处 | 只出现在报告 §2.8（「亮屏解冻：`needThawWhenScreenOn(uid)`」)；**契约 §A 的方法表里没有它** → 存在性未确证 |
 
 **拦截语义（先 proceed，再改写）**
 

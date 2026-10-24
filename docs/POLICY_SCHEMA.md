@@ -159,11 +159,11 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 | `enabled` | bool | `true` | `true`/`false` | 总开关。`false` ⇒ 所有判定返回原始值（`PolicyEngine.enabled`） |
 | `forceFreezeOnBackground` | bool | `true` | `true`/`false` | 与 `mode == immediate` 同时成立才强制冻结（`PolicyEngine.forceFreezeOnBackground`，`PolicyEngine.kt:34-37`） |
 | `audit` | bool | `true` | `true`/`false` | 关掉后 `freezeUid` 的审计事件不再写（`HookInstaller.kt:320`） |
-| `patchLists` | bool | `false` | `true`/`false` | **当前无逻辑读取**：`applyLists` 命令不受它控制（见 §11） |
-| `compactEvents` | bool | `false` | `true`/`false` | **当前无逻辑读取**（见 §11） |
+| `patchLists` | bool | `false` | `true`/`false` | `true` 时策略加载/每次 revision 变化后自动执行一次 `applyLists()`（写 `mNoRestrictAppSet` / `mGrabTicketsAppList`）；手动命令 `applyLists` 不看这个开关 |
+| `compactEvents` | bool | `false` | `true`/`false` | `true` 时事件环上限从 60 降到 20（`ModuleTelemetry.eventCap`），由 `ModuleController.applyGlobalSideEffects` 在加载/revision 变化时设置 |
 | `filterPolarityInverted` | bool | `false` | `true`/`false` | `true` 时把 `filter` 的**模块覆写**取反（`PolicyEngine.kt:80-81`）；只反转模块自己的答案，系统原值不动。属于「掩码行为与该 ROM 相反」时的逃生开关（诊断页有对应开关） |
 | `defaultDelayMs` | long | `0` | `0..600000`（解码 `coerceIn`，`PolicyCodec.kt:171`） | app 的 `delayMs` 为 0 时才用它（`PolicyEngine.kt:39-42`） |
-| `applyFreezeBinder` | bool? | `null` | `true`/`false`/缺省 | **当前无逻辑读取**；改写 GreeZe 云开关只走 `setFreezeBinder` 命令（见 §11） |
+| `applyFreezeBinder` | bool? | `null` | `true`/`false`/缺省 | 非 `null` 时在策略加载/revision 变化后调用一次 `setFreezeBinderEnableCloud(boolean)`（结果写进事件环）；`null` = 不动系统开关。也可用 `setFreezeBinder` 命令单独触发 |
 
 ### 3.3 `apps[<包名>]`
 
@@ -272,7 +272,7 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 | `"keep": 16777218` | `AUDIO(2) + CAMERA(16777216)`：通话、相机相关 reason 命中时强制**不冻结** |
 | `"drop": 64` | `NO_RESTRICT(64)`：不再承认 GreeZe 自己的白名单豁免 |
 | `"mode": "immediate"` | 一退到后台就由模块主动下发冻结（`delayMs` 缺省 = 0） |
-| `"processes"` | 已存储、已参与 `isEffective` 与 UI 展示；当前不影响判定（§11） |
+| `"processes"` | 已存储；在 `freezeProcess` 路径上参与判定（`neverFreeze(pkg, processName)`），其余三条冻结路径拿不到进程名（§11） |
 | `"resources"` | `net=false` 表示显式调 `udpPackageRestrict(uid,false)`；`job/wakelock=true` 表示加限制 |
 | `"thawOn"` | 亮屏 `needThawWhenScreenOn` 返回 `true`，`isAllowWakeUpList` 返回 `true`；`notification` 仅存储 |
 
@@ -562,12 +562,12 @@ ensureContext() 成功                      → publishHeartbeat()
 | 常量值 | 含义 | 谁在写 | UI 颜色令牌 | 浅色 / 深色 |
 |---|---|---|---|---|
 | `freeze` | 冻结成功（审计或强制） | `bodyFreezeUid`（结果为 `OK`）、`forcedFreeze` | `frozenFully` | `#3482FF` / `#4788FF` |
-| `thaw` | 解冻 | **当前无发射点** | `unfrozen` | `#00B884` / `#00BA7C` |
+| `thaw` | 解冻 | `execute()` 的 `thawAll` / `resetCgroup` / `thawUid` 三个 op | `unfrozen` | `#00B884` / `#00BA7C` |
 | `skip` | 主动放弃冻结 | `bodyFreezeUid`（`SKIP_BY_MOD`）、`bodyFilter`（verdict 为 `false`）、`forcedFreeze`（`already-frozen` / `cooldown`） | `warning` | `#FF6A05` / `#F97A1F` |
 | `block` | 拦截 | **当前无发射点** | `warning` | `#FF6A05` / `#F97A1F` |
 | `error` | 异常 | **当前无发射点**（异常只进 `hits/errors` 计数与日志） | `danger` | `#E94634` / `#F12522` |
 | `info` | 一般信息 | `bodyFilter`（verdict 为 `true`）、`bodyWhitelist`、`bodyFreezeUid`（非 `OK` 结果）、命令执行结果、策略 reload | `textHint` | `#66000000` / `#66FFFFFF` |
-| `boot` | 启动 | **当前无发射点** | `primary` | `#3482FF` / `#4788FF` |
+| `boot` | 启动 | `ensureContext()` 在 telemetry 就绪后写一条（detail 带已装 hook 数） | `primary` | `#3482FF` / `#4788FF` |
 
 颜色映射代码：`ui/pages/Common.kt:82-90`；色值：`ui/theme/Theme.kt:70-103`（浅色）/ `108-141`（深色）。
 
@@ -694,18 +694,18 @@ done
 
 | # | 项 | 事实 | 出处 |
 |---|---|---|---|
-| 1 | `apps[].processes` | 只参与 `isEffective` 与 UI 展示；所有 hook 调用点都**不传入进程名**（`engine.neverFreeze(pkg)`、`engine.forceFreezeOnBackground(pkg)`、`filterVerdict(pkg, reason, original)`），所以进程级覆盖不影响任何判定 | `HookInstaller.kt:294, 379, 392`、`PolicyEngine.kt:25-28` |
-| 2 | `global.patchLists` | 无读取方；`applyLists` 命令不看它，只要有 never/immediate 就打字段 | `ModuleController.kt:332-341` |
-| 3 | `global.compactEvents` | 无读取方 | `core/GlobalPolicy.kt:24` |
-| 4 | `global.applyFreezeBinder` | 无读取方；改云开关只走 `setFreezeBinder` 命令 | `GlobalPolicy.kt:22`、`ModuleController.kt:321-324` |
+| 1 | `apps[].processes` | **已接线，但只在一条路径上**：`freezeProcess(RunningProcess, …)` hook 会读出进程名并调用 `neverFreeze(pkg, processName)`，命中则直接返回 `false`（`freeze-process` 钩子）。`freezeUid` / `freezeUids` / `filter` 三个调用点仍不传进程名——它们本来就拿不到 | `HookInstaller.kt` `bodyFreezeProcess`、`PolicyEngine.kt:25-28` |
+| 2 | `global.patchLists` | 有读取方：`applyGlobalSideEffects` 在加载/revision 变化时自动 `applyLists()`；手动命令不受开关约束 | `ModuleController.kt` `applyGlobalSideEffects` / `applyLists` |
+| 3 | `global.compactEvents` | 有读取方：事件环上限 60 → 20 | `ModuleTelemetry.eventCap` |
+| 4 | `global.applyFreezeBinder` | 有读取方：非 `null` 时调用 `setFreezeBinderEnableCloud`，结果入事件环 | `ModuleController.kt` `applyGlobalSideEffects` |
 | 5 | `resources.alarm/broadcast/cpu` | 无 setter 调用（只有 `net` / `job` / `wakelock` 三项落地） | `HookInstaller.kt:420-428` |
 | 6 | `thawOn.netChange/notification/audioFocus/charging` | 无 hook 消费 | `HookInstaller.kt` 全文 |
 | 7 | `resetCgroup` op | 实现等同 `thawAll`，没有调 `resetCgroupUidStatus` / `resetCgroupUidFreezeStatus` | `ModuleController.kt:287-288` |
 | 8 | 键 `greeze_ctl_boot_guard_v1` | 只在 `Keys.ALL` 里出现，无读写方；守卫真值在 `persist.sys.hypergreeze.guard` | `core/Keys.kt:24, 38-40` |
-| 9 | 键 `greeze_ctl_safe_mode_v1` | App 会写 `"1"`，hook 侧没有读取方；生效路径是属性 `persist.sys.hypergreeze.safe` | `Repos.kt:69-72`、`SafetyGuard.kt:40` |
-| 10 | 广播 `ACTION_STATE_CHANGED` | 无发送、无注册 | `core/Keys.kt:36` |
-| 11 | `HookState.DISABLED` / `SKIPPED` | 常量存在，无写入点 | `core/State.kt:62-68` |
-| 12 | `EventType.THAW/BLOCK/ERROR/BOOT` | 常量存在，无发射点 | `HookInstaller.kt` 全文 |
+| 9 | 键 `greeze_ctl_safe_mode_v1` | App 写 `"1"`，hook 侧 `consumeSafeModeRequest` 在拿到 Context 后消费：latch `persist.sys.hypergreeze.safe=1` 并清标记，**下一次开机**生效 | `ModuleController.kt` `consumeSafeModeRequest` |
+| 10 | 广播 `ACTION_STATE_CHANGED` | 无发送、无注册（设计上就是轮询，见 §6） | `core/Keys.kt` |
+| 11 | `HookState.DISABLED` / `SKIPPED` | 常量存在，无写入点 | `core/State.kt` |
+| 12 | `EventType.BLOCK` / `ERROR` | 常量存在，无发射点；异常只进 `hits/errors` 与日志（`THAW` / `BOOT` 已接线） | `HookInstaller.kt` |
 | 13 | `isRestrictReceiver` 相关能力 | `GreezeProbe` 会探测 `isRestrictReceiver` / `isRestrictBackgroundAction`，但两者都没有 hook（注释说明：5 个参数认不出唯一包名，猜错会全局影响后台广播） | `GreezeProbe.kt:147-148`、`HookInstaller.kt:415-419` |
 | 14 | 多用户 | 两侧都用不带 user 参数的 `getString`，即固定 user 0 语义；工作资料 / 分身共享策略需要改 `getStringForUser` | `PolicyStore.kt:84-89`、`ModuleTelemetry.kt:121-126` |
 | 15 | 冻结态展示 | hook 侧不发布 per-uid cgroup 状态（每次轮询会多一次 Binder），UI 只在 `never` 时敢标「未冻结」，其余一律「未知」 | `MainViewModel.kt:277-287` |

@@ -11,7 +11,7 @@
 │ ui/         Compose + Miuix   │  写     │ module/                                  │
 │ ui/data/    SettingsGateway   │ ──────► │   HyperGreezeModule  (API 102 入口)       │
 │ ui/vm/      MainViewModel     │ Settings│   ModuleController   (生命周期/命令/心跳) │
-│                               │ .System │   HookInstaller      (8 个 hook)          │
+│                               │ .System │   HookInstaller      (10 个 hook)         │
 │                               │ ◄────── │   PolicyStore        (读策略 + 观察者)     │
 │                               │  读     │   PolicyEngine       (纯判定)             │
 └───────────────────────────────┘         │   ModuleTelemetry    (回写心跳/事件/日志)  │
@@ -43,7 +43,7 @@ onSystemServerStarting     → ModuleController.start()
    ├─ GreezeFacade                           实例先空，等下面两个钩子喂
    ├─ SafetyGuard.begin()                    只读/写 persist.sys.*，此刻不需要 Context
    ├─ HandlerThread("HyperGreeze")           所有重活都在这里，绝不占用引导线程
-   ├─ HookInstaller.install()                8 个落点，逐个 try/catch，失败记 ERROR
+   ├─ HookInstaller.install()                10 个落点，逐个 try/catch，失败记 ERROR
    ├─ post(ensureContext)                    Context 可能要等，最多重试 20×1.5s
    └─ postDelayed(markStable, 90s)           稳定窗口：走过就清空启动守卫计数
 ```
