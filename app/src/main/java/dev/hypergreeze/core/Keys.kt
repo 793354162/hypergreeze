@@ -29,10 +29,15 @@ object Keys {
     /** Human readable reason for the last safe-mode entry. */
     const val SAFE_MODE_REASON = "greeze_ctl_safe_mode_reason_v1"
 
+    /** One-shot command posted by the UI, executed by the hook side. See [Command]. */
+    const val COMMAND = "greeze_ctl_command_v1"
+
     /** Broadcast used as a best-effort fast path; polling is the guaranteed path. */
     const val ACTION_STATE_CHANGED = "dev.hypergreeze.action.STATE_CHANGED"
 
-    val ALL: List<String> = listOf(POLICY, HEARTBEAT, EVENTS, LOGS, BOOT_GUARD, SAFE_MODE_REQUEST, SAFE_MODE_REASON)
+    val ALL: List<String> = listOf(
+        POLICY, HEARTBEAT, EVENTS, LOGS, BOOT_GUARD, SAFE_MODE_REQUEST, SAFE_MODE_REASON, COMMAND,
+    )
 }
 
 object Module {

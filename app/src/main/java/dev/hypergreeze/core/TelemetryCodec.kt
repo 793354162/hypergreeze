@@ -29,6 +29,7 @@ object TelemetryCodec {
         root.putOpt("safeReason", hb.safeModeReason)
         root.put("bootGuard", hb.bootGuard)
         root.put("revision", hb.revision)
+        root.put("lastSeq", hb.lastCommandSeq)
 
         val hooks = JSONArray()
         for (hook in hb.hooks) {
@@ -92,6 +93,7 @@ object TelemetryCodec {
                 safeModeReason = root.oStr("safeReason"),
                 bootGuard = root.oInt("bootGuard") ?: 0,
                 revision = root.oLong("revision") ?: 0L,
+                lastCommandSeq = root.oLong("lastSeq") ?: 0L,
                 hooks = hooks,
                 capabilities = caps,
             )

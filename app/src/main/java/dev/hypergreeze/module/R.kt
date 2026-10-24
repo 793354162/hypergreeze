@@ -50,7 +50,15 @@ object R {
         var pool = candidates
         if (arity != null) {
             val byArity = pool.filter { it.parameterCount == arity }
-            if (byArity.isNotEmpty()) pool = byArity
+            if (byArity.isNotEmpty()) {
+                pool = byArity
+            } else {
+                // Arity changed by an OTA: only accept the substitution when the name is
+                // unambiguous, otherwise the caller must treat the key as missing.
+                val distinct = pool.distinctBy { it.parameterCount }
+                if (distinct.size != 1) return null
+                pool = distinct
+            }
         }
         if (returnType != null) {
             val byReturn = pool.filter { it.returnType == returnType }

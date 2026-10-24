@@ -97,6 +97,8 @@ data class Heartbeat(
     val safeModeReason: String? = null,
     val bootGuard: Int = 0,
     val revision: Long = 0L,
+    /** Highest command sequence the hook side has executed; lets the UI avoid replays. */
+    val lastCommandSeq: Long = 0L,
     val hooks: List<HookStatus> = emptyList(),
     val capabilities: Map<String, Boolean> = emptyMap(),
 ) {
