@@ -79,6 +79,7 @@ private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
 fun formatTime(ts: Long): String = if (ts <= 0) "--:--:--" else timeFormat.format(Date(ts))
 
+@Composable
 fun eventColor(type: String): Color = when (type) {
     EventType.FREEZE -> MiuixTheme.colors.frozenFully
     EventType.SKIP -> MiuixTheme.colors.warning
