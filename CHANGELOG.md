@@ -2,6 +2,14 @@
 
 所有改动按「为什么」而不是「改了什么文件」记录。
 
+## [1.0.2] — 2026-10-25
+
+运行时无改动，补测试与 CI 门禁：
+
+* 新增 3 个纯 JVM 测试类（28 个用例）：`PolicyCodecTest`（往返/容错/锁定位剥离/数值钳制）、`SceneBitTest`（位唯一性/掩码往返/锁定集合/枚举覆盖）、`PolicyEngineTest`（四态、keep/drop、极性反转、进程覆盖、延时回落、主开关放行）。
+* CI 增加 `:app:testReleaseUnitTest` 步骤，测试失败即构建失败；测试报告随 artifact 上传。
+* 用真实 `org.json` artifact 替换 android.jar 的桩实现，保证编解码测试走的是运行时同一份代码。
+
 ## [1.0.1] — 2026-10-25
 
 * **`processes`（子进程例外）真正接线**：新增 `freeze-process` hook，从 `RunningProcess` 反射读 uid / processName，命中进程级 `NEVER` 时不 `proceed()`。此前该字段只存不用。
