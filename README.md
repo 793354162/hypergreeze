@@ -25,6 +25,8 @@ HyperOS 的 GreeZe 把「冻结 / 解冻 / 名单 / 资源限制 / 状态查询�
 | 事件审计（冻结 / 跳过 / 失败原因串） | ✅ | `freezeUid` 返回值 + 命令回执 |
 | 命令通道（解冻全部 / 立即冻结 / 快速模式 / 安全模式…） | ✅ | `Settings.System` + `seq` 水位 |
 | 安全模式（连续 3 次异常启动自动被动） | ✅ | `persist.sys.hypergreeze.guard` |
+| **一切改动可还原**（副作用账本 + 一键还原 / 彻底清理） | ✅ | `core/Journal.kt` + `module/Effector.kt` |
+| **简单 / 专家两档界面**、术语表、策略试算 | ✅ | `global.uiExpert` + `core/Explain.kt` |
 | 单线程冻结 / 单 binder 事务 / 冻结后仍收推送 | ⛔ 物理不可能 | cgroup v2 + Android 推送模型边界 |
 
 **它绝不写 GreeZe 的系统属性**（`persist.sys.gz.*`、`persist.sys.greeze.*`），也不 hook 任何与冻结无关的服务。卸载模块后系统行为立即回到原生。
@@ -48,6 +50,8 @@ adb shell settings put system greeze_ctl_safe_mode_v1 1    # 请求安全模式�
 adb shell settings put system greeze_ctl_boot_guard_v1 0   # 清启动守卫计数（重启后生效）
 # 终极手段：LSPosed 里取消「系统框架」作用域后重启
 ```
+
+**App 内**：首页 →「模块改动 · 可还原」→ 确认还原。它会解冻全部、把资源/名单/binder 改动反做、暂停模块再次施加，并清空账本（策略保留）。卸载前用同页的「彻底清理」，它连模块写入的设置键与属性一起删。细节见 [docs/REVERSIBILITY.md](docs/REVERSIBILITY.md)。
 
 安全模式还有一条不依赖 App 的路径：`adb shell setprop persist.sys.hypergreeze.safe 1`。
 
@@ -74,9 +78,13 @@ git tag v1.0.1 && git push origin v1.0.1
 
 | 文档 | 内容 |
 |---|---|
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 1.1 的四个目标与逐项验收状态（含"需要真机"的部分） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 三层架构、启动时序、一次「退后台」的完整调用链、线程模型 |
 | [docs/HOOK_MAP.md](docs/HOOK_MAP.md) | 每个 hook 的落点 / 语义 / `proceed()` 位置 / 失败模式 / 验证命令 |
 | [docs/POLICY_SCHEMA.md](docs/POLICY_SCHEMA.md) | Settings 键表、策略 JSON 全字段、32 位掩码表、命令 op、心跳与事件字段、adb 手改示例 |
+| [docs/REVERSIBILITY.md](docs/REVERSIBILITY.md) | 每个副作用的逆操作、哪些真的反不了、卸载残留、核验命令 |
+| [docs/UX_GUIDE.md](docs/UX_GUIDE.md) | 「我想要 X → 这样设」决策表、两档界面、术语表、反直觉点 |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | 热路径预算、本轮优化前后对照、剩余开销、测量方法 |
 | [docs/LIMITS.md](docs/LIMITS.md) | 做不到的、故意不做的、未确证的、版本漂移降级路径 |
 | [docs/DESIGN_MIUIX.md](docs/DESIGN_MIUIX.md) | Miuix 设计令牌（颜色/尺寸/排版）、超椭圆圆角实现、控件清单、与 M3 的差异 |
 | [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | 真机验收清单（54 项，含取证命令与失败判定） |

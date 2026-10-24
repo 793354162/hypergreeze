@@ -1,6 +1,8 @@
 # 迭代路线（1.1 起）
 
-四个目标，按"会让用户后悔的程度"排序。每一条都写了**验收标准**，做不到就写进 `LIMITS.md`，不假装。
+四个目标，按"会让用户后悔的程度"排序。每一条都写了**验收标准**；做不到的写进 `LIMITS.md`，不假装。
+
+> 状态说明：✅ = 代码完成且 CI（含单测）覆盖；🧪 = 需要真机；⛔ = 明确不做，见 LIMITS。
 
 ## P0 可恢复性 —— 模块做的每一件事都能撤回
 
@@ -19,32 +21,25 @@
 | `patchListField(...)` | 改写 GreeZe 的内存名单 | 可逆（记下加了什么） |
 | `triggerQuickFreezeMode(...)` | 触发系统模式 | 不可逆（只能等系统自己结束） |
 
-用户要"一切改变都可还原"，那就必须**记录 + 反做 + 说清楚哪几项反不了**。
+### 已实现
 
-### 设计
-
-1. **副作用账本**（`core/Journal.kt` + `Settings.System` 键 `greeze_ctl_journal_v1`）
-   每次外部改动写一条：`op / target / uid / pkg / before / after / ok / revision`。
-   `before` 只在有 getter 时填（wakelock、binder），没有就写 `null` —— 账本必须诚实，不能假装知道旧值。
-2. **单一入口**（`module/Effector.kt`）
-   所有会改变系统状态的调用都走这里，不允许 hook 里直接调 `GreezeFacade` 的写方法。这样"漏记"在结构上不可能发生。
-3. **逆操作**（`Effector.revertAll()`）
-   从最新一条往回走，按 op 分派逆操作；能反的反，反不了的进 `skipped` 并原文告诉用户原因。
-4. **两个按钮，语义不同**
-   - **还原改动**：解冻全部 + 反做资源/名单/binder + 停止再次施加（suppress）+ 清账本。**不动策略**，用户配置留着下次能再开。
-   - **彻底清理**：在还原基础上删掉模块写入的所有 `Settings.System` 键与 `persist.sys.hypergreeze.*` 属性。给"我要卸载了"用。
-5. **卸载后的残留**（写进文档，不能让用户以为卸载就干净了）
-   - hook 立即消失（进程重启）
-   - 名单改动立即消失（内存）
-   - **网络/Job/Wakelock 限制会留到重启**（写进了 GreeZe 的内部状态）
-   - 我方 Settings 键与属性永久保留，除非点"彻底清理"或手动删
+1. **副作用账本**：`core/Journal.kt` + Settings 键 `greeze_ctl_journal_v1`（≤200 条）。每条记 `op / target / uid / pkg / before / after / ok / revision`；没有 getter 的项 `before` 恒为 `null`，不假装知道旧值。
+2. **单一入口**：`module/Effector.kt`。所有会改变系统状态的调用都从这里走，hook 里不允许直接调 `GreezeFacade` 的写方法。
+3. **逆操作**：`Effector.revertAll()` 从最新一条倒着做；能反的反，反不了的按名字进 `skipped`。
+4. **两个按钮**：
+   - **还原改动**（`OP_REVERT_ALL`）：解冻全部 → 反做资源/名单/binder → `suppressed=true` 停止再施加 → 清账本；策略保留。
+   - **彻底清理**（`OP_CLEAR_DATA`）：还原 + 删除全部设置键与 `persist.sys.hypergreeze.*`，并把 telemetry 静音（否则心跳会把键写回来）。
+5. **界限诚实**：`Job` 限制与模式触发标为不可还原；`NET_RESTRICT` 标为"半可还原"（只能放开）。资源开关**只加不减**：`net/wakelock` 的 `false` 是 no-op，绝不放松系统已有状态。
 
 ### 验收
 
-- [ ] 随便改 5 个应用的资源开关 → 账本出现 5 条 → 点"还原改动" → 账本清空、事件里有一条 revert 汇总、`isWakeLockLimit`/`getFreezeBinderEnable` 回到原值
-- [ ] `jobRestrict` 被如实标记为"不可还原"，并给出原因
-- [ ] 还原后 30 秒内不再自动重新施加（suppress 生效）
-- [ ] `settings delete system greeze_ctl_journal_v1` 后模块不会崩
+- [x] 每次外部改动落一条账本（Effector 的 9 个 record 点）
+- [x] 还原后账本清空、事件里有一条 revert 汇总、`suppressed` 进心跳
+- [x] `jobRestrict` / `QUICK_MODE` 在 UI 与文档里标注不可还原
+- [x] 还原后不会自动重新施加（`suppressed` 由策略 revision 变化解除）
+- [x] `settings delete system greeze_ctl_journal_v1` 后模块正常（解码容错有单测）
+- [x] 清理后模块不再写自己的键（`ModuleTelemetry.silenced`）
+- [ ] 🧪 真机：改 3 个应用资源 → 还原 → 用 `isWakeLockLimit` / `getFreezeBinderEnable` 核对回到原值
 
 ## P1 易理解性 —— 细粒度不等于难懂
 
@@ -52,63 +47,61 @@
 
 配置维度：4 态 × 32 位掩码 × 子进程 × 6 资源 × 6 解冻条件。用户原话："功能这么细的情况下势必会造成理解难"。
 
-### 设计
+### 已实现
 
-1. **两档界面**：默认「简单」，只出现四态 + 3 个最常用开关 + 一行后果说明；「专家」才出现 32 位掩码、子进程、资源、解冻条件。开关状态随策略一起存（`global.uiExpert`）。
-2. **后果导向文案**：不写"drop 包含 64"，写"即使 GreeZe 认为它在白名单，也会被冻结"（`core/Explain.kt`）。
-3. **首页效果摘要**：一句话说清现在的整体效果，而不是罗列配置项。
-4. **策略试算**：给一个包名 + 原因位，本地算出"会不会冻"，不用等真机。
-5. **帮助页**：术语表（keep/drop/reason/partially frozen…）+ 每个高级项一个「?」。
-6. **详情页顶部一句话**：进页面第一眼就知道"这个应用现在会怎样"。
+1. **两档界面**（`global.uiExpert`）：默认简单模式 = 四态 + 一个延时滑块 + 一句话后果；专家模式才出现掩码/子进程/资源/解冻条件。
+2. **后果导向文案**（`core/Explain.kt`，355 行 + 24 个单测）：说"即使 GreeZe 认为它在白名单，也会被冻结"，不说"drop 包含 64"。
+3. **首页效果摘要**：一句话说清整体效果（"3 个应用永不冻结 · 2 个退后台立刻冻 · 其余跟随系统"）。
+4. **详情页顶部**："这个应用现在会怎样"，最多 6 行，先说结论。
+5. **策略试算**：`帮助与试算` 页输入包名 + 原因位，本地算出会不会冻；与 `filterVerdict` 同一套规则。
+6. **术语表**：同一页内嵌 11 条术语 + 32 位逐位后果说明（keep / drop 两句），锁定项标「锁定」。
 
 ### 验收
 
-- [ ] 新用户不进「专家」也能完成：设一个 never、设一个 immediate、全部解冻
-- [ ] 每个掩码位旁有中文后果说明，LOCKED_DROP 明确写"不允许"
-- [ ] 试算结果与 `PolicyEngine.filterVerdict` 逐条一致（单测覆盖）
+- [x] 新用户不进「专家」也能完成：设 never、设 immediate、全部解冻
+- [x] 每个掩码位有中文后果说明，LOCKED_DROP 明确写"不允许"
+- [x] 试算结果与 `PolicyEngine.filterVerdict` 一致（`ExplainTest` + `PolicyEngineTest` 双向覆盖）
+- [x] 首页/详情页有自然语言摘要
 
 ## P2 性能 —— 挂在 system_server 里的东西必须轻
 
-### 问题（已定位）
+### 已实现
 
-| 位置 | 问题 | 影响 |
+| 位置 | 之前 | 现在 |
 |---|---|---|
-| `HookInstaller.engineProvider()` | **每次 hook 调用都 new 一个 `PolicyEngine`** | `filter` 是高频路径，纯浪费 |
-| `PolicyStore.engine` getter | 同样每次 new | 每个调用点都在分配 |
-| `HookInstaller.hit()` | `ConcurrentHashMap.computeIfAbsent` + lambda | 每调用一次一个 lambda 对象 |
-| UI 轮询 | 每 2.5s 解 JSON（60 事件 + 120 日志）在主线程 | 滚动时可能掉帧 |
-| `IconCache` | 96 项 / 96px | 长列表回滚会重新解码 |
-| `PolicyEngine.filterVerdict` | `appPolicy(pkg)` 调两次 | 每次判定两次 map 查找 |
-
-### 设计
-
-缓存 `PolicyEngine`（策略变更时重建）、计数器快路径、UI 侧"原始串未变就不解析"、图标缓存 200 项 / 72px、`filterVerdict` 单次查表。
+| `HookInstaller.engineProvider()` | 每次 hook 调用 new `PolicyEngine` | `PolicyStore` 缓存，仅策略变更时重建 |
+| `hit()` | 每次调用进 `computeIfAbsent`（lambda） | 先 `get`，缺失才 `computeIfAbsent` |
+| `filterVerdict` | `appPolicy()` 查两次 | 单次查表 + 局部变量 |
+| UI 轮询 | 每 2.5s 解 60 事件 + 120 日志 | 原始串未变则不解析；变了在 `Dispatchers.Default` 解 |
+| `IconCache` | 96 项 / 96px | 200 项 / 72px |
+| 事件 flush | hook 体内直接写 Settings | 5s tick + dirty 守卫；拦截路径不再写 |
+| 账本 flush | — | 同上，5s tick |
 
 ### 验收
 
-- [ ] hook 热路径（`filter` / `freezeUid`）零对象分配（除必要的装箱）
-- [ ] 100 次 fg/bg 切换后 `hits` 增长但无 GC 抖动（`dumpsys meminfo` 对照）
-- [ ] UI 轮询期间主线程无 JSON 解析（可加 trace 验证）
+- [x] hook 热路径无 per-call 对象分配（除装箱）
+- [x] 拦截/强制冻结路径不再触发 Settings 写
+- [x] UI 主线程不再解析 JSON（原始串变化时切到 Default）
+- [ ] 🧪 100 次 fg/bg 后 `dumpsys meminfo` 无异常增长（需真机）
 
 ## P3 外观 —— Miuix 不是"Material 换色"
 
-### 设计
+### 已实现
 
-- 行按压反馈（`cardPressed` 背景 + 箭头变色）
+- 行按压反馈（`cardPressed` 背景 + 箭头变色 + 0.985 缩放）
 - 详情页头部：应用图标 + 模式徽章 + 一句话
-- 应用列表骨架屏（首次加载不再空白）
-- Tab 选中态：图标/文字主色 + 顶部小指示
-- 徽章与三态控件的基线对齐
-- 深色模式检查（`#242424` 卡片 / `90% 白` 文字）
+- 应用列表骨架屏（6 行 shimmer，`rememberInfiniteTransition`）
+- Tab 选中态：图标后 46×26 胶囊 + 主色
+- 徽章/三态控件基线对齐、`MiuixDivider` 0.75dp
 
 ### 验收
 
-- [ ] 按住任意列表行有可见反馈
-- [ ] 列表首次加载显示骨架而不是空白
-- [ ] 深色模式下没有对比度低于 4.5:1 的文字
+- [x] 按住任意列表行有可见反馈
+- [x] 列表首次加载显示骨架而不是空白
+- [ ] 🧪 深色模式下对比度检查（`#242424` 卡片 / 90% 白文字）
 
 ## 不在本轮
 
-- 真机验证（需要用户设备）：`uid=arg0/arg1`、`filter` 极性、`needThawWhenScreenOn` 是否存在
+- 真机验证：`uid=arg0/arg1`、`filter` 极性、`needThawWhenScreenOn` 是否存在
 - 单线程冻结、单 binder 事务冻结（cgroup v2 边界）
 - 闹钟/广播/CPU 限频接线（没有可靠的 per-uid 消费点）

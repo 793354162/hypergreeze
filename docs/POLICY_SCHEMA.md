@@ -277,7 +277,7 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 | `"drop": 64` | `NO_RESTRICT(64)`：不再承认 GreeZe 自己的白名单豁免 |
 | `"mode": "immediate"` | 一退到后台就由模块主动下发冻结（`delayMs` 缺省 = 0） |
 | `"processes"` | 已存储；在 `freezeProcess` 路径上参与判定（`neverFreeze(pkg, processName)`），其余三条冻结路径拿不到进程名（§11） |
-| `"resources"` | `net=false` 表示显式调 `udpPackageRestrict(uid,false)`；`job/wakelock=true` 表示加限制 |
+| `"resources"` | 三态里只有 `true` 会真的调 setter（`udpPackageRestrict(uid,true)` / `jobRestrict(uid)` / `updateWakeLockLimit(uid,true)`）；`false` 与 `null` 都是"不加限制"。**模块从不放松系统已有的限制**——那些 setter 没有可信的逆操作 |
 | `"thawOn"` | 亮屏 `needThawWhenScreenOn` 返回 `true`，`isAllowWakeUpList` 返回 `true`；`notification` 仅存储 |
 
 ---

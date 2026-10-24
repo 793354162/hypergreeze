@@ -21,8 +21,8 @@
 | 卸载前清理 | 首页 → 「彻底清理（卸载前）」→ 确认 | 命令 `clearData` | 策略配置一起删；清理后心跳/事件会被写回来，正确顺序是**清理 → 卸载 → 重启**（REVERSIBILITY §4.1） |
 | 白名单里的 App 也想冻 | 专家 → 场景掩码 → **白名单 = 丢弃** | `{"mode":"immediate","drop":64}` | 前提是该 ROM 走 `isNoRestrictApp` / `isTempWhite`——诊断页看这两个 hook 的 `hits` 有没有涨 |
 | 亮屏就解冻 | 专家 → 解冻条件 → **亮屏解冻 = 开** | `{"thawOn":{"screenOn":true}}` | 只有 `screenOn` 与 `externalWake` 真接了线；另外 4 个开关存了不生效（LIMITS §2-6） |
-| 冻结但别断网 | 专家 → 资源联动 → **切断网络 = 关** | `{"resources":{"net":false}}` | 「关」不等于「不动」：代码会真的调 `udpPackageRestrict(uid,false)` 把网络放开，而且账本记不到原值（反直觉点 5） |
-| 想先知道「会不会被冻」 | 现在没有入口：详情页顶部只有后果句，`Explain.filterPreview` 已实现但页面没接 | — | 试算函数与单测都在（`core/Explain.kt`、`ExplainTest`），但**不能**当成已上线的功能讲 |
+| 冻结但别断网 | 专家 → 资源联动 → **切断网络 = 跟随** | `{"resources":{}}` | 三态里只有「开启」会真的加限制；「关闭」与「跟随」都是不动（模块从不放松系统已有限制，因为那些 setter 没有可信的逆操作） |
+| 想先知道「会不会被冻」 | 诊断 → **帮助与试算** → 输入包名 + 选原因位 | — | 纯本地计算，与 hook 侧同一套规则；结果里会说明是 keep/drop/无命中/未配置 |
 
 > 三个「一次就够、但容易点错」的按钮：首页的「全部解冻」只发 `thawAll`；详情页的「立即冻结」是**一次性命令**；详情页的「恢复为跟随系统」只删这一条策略，不撤销已施加的资源限制。
 
@@ -147,13 +147,17 @@ adb shell settings get system greeze_ctl_heartbeat_v1 | jq '{revision,enabled}'
 
 所以「改完立刻看诊断页数字」很可能还是旧值；资源开关要等**下一次强制冻结**才落地。
 
-### 5.5 为什么「资源联动 = 关」不等于「什么都不做」
+### 5.5 为什么「资源联动 = 关闭」不等于「放开」
 
-`applyResources()` 对非 null 的一律调 setter：`net=false` 会真的调 `udpPackageRestrict(uid,false)`（把网络放开），`wakelock=false` 会调 `updateWakeLockLimit(uid,false)`。这与 `ResourceSwitches` 的类注释「never relaxes a system-side restriction」不完全一致，**以代码为准**。只有 `job` 是「仅 true 才调」。三态的「跟随系统」才是真的不动。
+三态是「跟随 / 开启 / 关闭」，但**只有「开启」会真的调 setter**（`udpPackageRestrict(uid,true)`、`jobRestrict(uid)`、`updateWakeLockLimit(uid,true)`）。「关闭」与「跟随」都是"不额外施加限制"。
 
-### 5.6 为什么「彻底清理」之后设置键又出现了
+原因不是省事：`udpPackageRestrict` 没有 getter，我们读不到原值；`jobRestrict(int)` 是 void 且没有解除接口。真去调 `false` 就成了"用一个猜出来的状态覆盖系统状态"，既不可还原也不可验证。所以 `Effector.netRestrict` / `wakelockLimit` 的第一行就是 `if (!limit) return` —— 想放开网络，请在 GreeZe 自己的设置里操作。
 
-清理只删**当时**那 9 个键；紧接着 `processCommand()` 收尾会发布一次心跳、落盘一次命令回执事件，日志也会在 15 s 节流到点后写回。这不是清理失败，是模块还活着。正确姿势见 REVERSIBILITY §4.1。
+### 5.6 为什么「彻底清理」之后设置键不会又出现
+
+清理会删当时的 9 个键，并把 `ModuleTelemetry.silenced` 置为 `true`，此后心跳、事件、日志、账本的所有 Settings 写入都是空操作。所以清理后不会"自己长回来"。
+
+要点：**清理 → 卸载 → 重启** 是这个顺序。清理只保证模块自己不再写；GreeZe 已经施加到某个 uid 上的网络/Job/Wakelock 限制仍要等重启才彻底消失（见 REVERSIBILITY §4）。
 
 ---
 

@@ -2,6 +2,47 @@
 
 所有改动按「为什么」而不是「改了什么文件」记录。
 
+## [1.1.0] — 2026-10-25
+
+主题：**可恢复性、易理解性、性能、外观**（详见 `docs/ROADMAP.md`）。
+
+### 可恢复性（P0）
+
+* **副作用账本**（`core/Journal.kt` + 键 `greeze_ctl_journal_v1`，≤200 条）：每次改系统状态记一条，带 `before/after`、ok、策略 revision。
+* **单一写入口**（`module/Effector.kt`）：hook 层不再直接调 `GreezeFacade` 的写方法，漏记在结构上不可能发生。
+* **还原**（`OP_REVERT_ALL`）：`thawAll` → 账本倒序反做 → 清账本 → `suppressed` 抑制再次施加；策略保留。
+* **彻底清理**（`OP_CLEAR_DATA`）：还原 + 删全部设置键与属性；同时把 `ModuleTelemetry.silenced` 置真，心跳不会把键写回来。
+* UI：首页「模块改动 · 可还原」入口 + 确认弹层（列出将还原的条目、单独列出不可还原项、两个语义不同的按钮）。
+* **资源开关只加不减**：`net`/`wakelock` 的 `false` 变成 no-op。之前会真的调 `udpPackageRestrict(uid,false)` 放开网络——既违背「不放松系统限制」的设计，也没有 getter 能记原值。
+
+### 易理解性（P1）
+
+* **`core/Explain.kt`**：把配置翻译成人话（四态后果、详情页 3–6 行结论、首页一句话摘要、原因位中文、逐位后果、策略试算）。
+* **两档界面**（`global.uiExpert`）：默认只显示四态 + 一个延时滑块；掩码/子进程/资源/解冻条件收进「专家选项」。
+* **首页效果摘要** + **详情页顶部「这个应用现在会怎样」**（带应用图标与模式徽章）。
+* **新页面「帮助与试算」**：11 条术语 + 32 位逐位后果（keep/drop 各一句，锁定项标注）+ 输入包名与原因位本地试算。
+
+### 性能（P2）
+
+* `PolicyStore` 缓存 `PolicyEngine`：此前**每次 hook 调用都 new 一个**（`filter` 是高频路径）。
+* `hit()` 快路径：先 `get` 再 `computeIfAbsent`，热路径不再分配 lambda。
+* `filterVerdict` 单次查表（原来查两次）。
+* UI 轮询：原始串未变不解析；变化时切 `Dispatchers.Default`。
+* 拦截/强制冻结路径不再直接写 Settings（改由 5s tick 统一 flush）。
+* `IconCache` 200 项 / 72px。
+
+### 外观（P3）
+
+* 列表行按压反馈（`cardPressed` 背景 + 缩放 + 箭头变色）。
+* 应用列表骨架屏（shimmer）。
+* Tab 选中态胶囊。
+* 详情页头部图标 + 徽章；徽章与三态控件基线对齐。
+
+### 测试
+
+* 新增 `ExplainTest`（24 用例）、`JournalTest`（16 用例）；总用例从 28 → 68。
+* 账本编解码对 `org.json` 不保证键序这件事做了容错（不依赖字段顺序，逐字段读取）。
+
 ## [1.0.2] — 2026-10-25
 
 运行时无改动，补测试与 CI 门禁：
