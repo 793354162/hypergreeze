@@ -120,6 +120,9 @@ fun HyperGreezeApp(vm: MainViewModel) {
                             onRequestSafeMode = { vm.requestSafeMode() },
                             onClearSafeMode = { vm.clearSafeMode() },
                             onApplyLists = { vm.applyLists() },
+                            onToggleFilterPolarity = { value ->
+                                vm.setGlobal { g -> g.copy(filterPolarityInverted = value) }
+                            },
                         )
                     }
                 }

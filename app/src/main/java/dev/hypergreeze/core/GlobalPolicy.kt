@@ -22,6 +22,13 @@ data class GlobalPolicy(
     val applyFreezeBinder: Boolean? = null,
     /** Keep the event ring buffer shorter to save Settings writes. */
     val compactEvents: Boolean = false,
+    /**
+     * Escape hatch for the one polarity assumption in the whole module: `AurogonFilterManager
+     * .filter(uid, pkg, reason)` is documented as "true = freezing allowed", but that was read off
+     * the bytecode callers, not observed on a device. If masks behave backwards on a given ROM,
+     * flipping this inverts only the module's *override*, never the system's own answer.
+     */
+    val filterPolarityInverted: Boolean = false,
 ) {
     companion object {
         val SAFE_DEFAULT = GlobalPolicy()

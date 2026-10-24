@@ -59,6 +59,7 @@ class ModuleController(
     private var lastCommandSeq = 0L
     private var commandObserver: ContentObserver? = null
     private var lastRevision = -1L
+    private var tickCount = 0L
 
     fun start() {
         if (started) return
@@ -205,6 +206,7 @@ class ModuleController(
 
     private fun tick() {
         val policyStore = store ?: return
+        tickCount++
         if (policyStore.reload()) {
             installer?.invalidateUidCache()
             telemetry?.record(
@@ -217,11 +219,12 @@ class ModuleController(
             lastRevision = policyStore.policy.revision
             publishHeartbeat()
         }
+        // Dirty-guarded: writing nothing when nothing changed, so a 5s cadence costs one lock.
         work?.post {
             telemetry?.flushEvents()
             telemetry?.flushLogs()
         }
-        publishHeartbeat()
+        if (tickCount % HEARTBEAT_EVERY_TICKS == 0) publishHeartbeat()
     }
 
     private fun publishHeartbeat() {
@@ -364,7 +367,8 @@ class ModuleController(
     }
 
     private companion object {
-        const val TICK_MS = 30_000L
+        const val TICK_MS = 5_000L
+        const val HEARTBEAT_EVERY_TICKS = 6L
         const val CONTEXT_RETRY_MS = 1_500L
         const val MAX_CONTEXT_ATTEMPTS = 20
     }

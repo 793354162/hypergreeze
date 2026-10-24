@@ -36,7 +36,7 @@
 |---|---|---|---|
 | **`Settings.System` JSON 键** | 推荐。App 侧需 `WRITE_SETTINGS`；`system_server` 直接读；无 SELinux 问题；跨重启持久；可被 `ContentObserver` 监听；天然按用户分库 | **采用，单通道双文档**（App→hook 写 `policy`/`command`，hook→App 写 `heartbeat`/`events`/`logs`） | App 必须拿到 appop `WRITE_SETTINGS`，否则写入被拒（`ui/data/Repos.kt:48-55` 显式返回 `false`，UI 报错而不假装保存） |
 | `XSharedPreferences` + `xposedsharedprefs` meta-data | 只读语义为主、写回不实时，适合当 boot 期初值 | 不用 | 两个独立原因：①本模块要「UI 改完秒级生效 + 回读心跳」的双向语义，prefs 是 key-value 增量、不是整份文档；②新 API 下它属 legacy 路径（既有定论见 `ARCHITECTURE.md` §2） |
-| 广播（hook → UI 回写） | 适合事件推送，不适合大数据 | 只留常量 `Keys.ACTION_STATE_CHANGED`（`core/Keys.kt:36`），**当前代码没有发送方也没有接收方** | 快路径实际由 `ContentObserver` + 30 s 轮询承担（`ModuleController.kt:149-171, 352`） |
+| 广播（hook → UI 回写） | 适合事件推送，不适合大数据 | 只留常量 `Keys.ACTION_STATE_CHANGED`（`core/Keys.kt:36`），**当前代码没有发送方也没有接收方** | 快路径实际由 `ContentObserver` + 5 s tick 轮询承担（`ModuleController.kt:149-171, 191-210`） |
 | Unix abstract socket / 文件 | `system_server` 连 App socket 常被 SELinux 拦；App 写 `/data/system/` 走不通 | 不用 | 一旦被 SELinux 拦就是整条通道静默失效，没有可观测的失败信号 |
 
 ### 1.2 采用 `Settings.System` 的五个具体理由
@@ -60,7 +60,7 @@
 
 | 文档 | 写入时机 | 节流 |
 |---|---|---|
-| `heartbeat` | Context 就绪、启动后 90 s 稳定窗口、每 30 s tick、每条命令执行后 | `HEARTBEAT_MIN_INTERVAL_MS = 5000`（`ModuleTelemetry.kt:157`）；但 `ModuleController.publishHeartbeat()` 恒传 `force = true`（`ModuleController.kt:237`），实际按上述时机全量写 |
+| `heartbeat` | Context 就绪、启动后 90 s 稳定窗口、每 6 个 tick（约 30 s）、每条命令执行后、策略 revision 变化 | `HEARTBEAT_MIN_INTERVAL_MS = 5000`（`ModuleTelemetry.kt:157`）；但 `ModuleController.publishHeartbeat()` 恒传 `force = true`（`ModuleController.kt:240`），实际按上述时机全量写 |
 | `events` | `record()` 只标脏；`flushEvents()` 才落盘 | 仅脏时写（`ModuleTelemetry.kt:92-99`）；`forcedFreeze` 与 `processCommand` 主动 flush |
 | `logs` | tick 内 `flushLogs()` | `LOG_FLUSH_INTERVAL_MS = 15000`（`ModuleTelemetry.kt:158`） |
 
@@ -74,7 +74,7 @@
 |---|---|---|---|---|---|
 | `greeze_ctl_policy_v1` | **App**（`SettingsGateway.writePolicy` → `Settings.System.putString`，`ui/data/Repos.kt:59`） | JSON object（字符串） | 整份策略文档，schema 见 §3 | 代码未设条目上限；整份重写、无增量；只序列化非默认字段（`PolicyCodec.encodeApp` 的 `putOpt`） | `{"v":2,"rev":12,"ts":1761692400000,"global":{"enabled":true,"forceFreezeOnBackground":true,"audit":true,"patchLists":false,"compactEvents":false},"apps":{"com.tencent.mm":{"mode":"immediate","keep":16777218}}}` |
 
-- 读取方：hook（`module/PolicyStore.kt:84-89`），注册 `Settings.System.getUriFor(Keys.POLICY)` 且 `descendant = true`（`PolicyStore.kt:57-61`），变更即时 `reload()`；30 s tick 是兜底。
+- 读取方：hook（`module/PolicyStore.kt:84-89`），注册 `Settings.System.getUriFor(Keys.POLICY)` 且 `descendant = true`（`PolicyStore.kt:57-61`），变更即时 `reload()`；每个 tick（5 s）的 `reload()` 是兜底。
 - 变更判定：`reload()` 先比较**原始字符串**，相同则直接返回 `false`（`PolicyStore.kt:72`），不相同才解析并比较 `Policy` 相等性。
 - 键被删除时 `readRaw()` 返回 `null` → `PolicyCodec.decode(null)` → `Policy.EMPTY`（`revision = 0`），模块回到纯跟随。
 
@@ -84,7 +84,7 @@
 |---|---|---|---|---|---|
 | `greeze_ctl_command_v1` | **App**（`SettingsGateway.sendCommand`，`ui/data/Repos.kt:67`） | JSON object（字符串） | 一次性命令，见 §5 | 单对象；执行后**不清键**（靠 `seq` 水位去重），永远只会存在一条 | `{"seq":1761692400123,"op":"thawAll"}` |
 
-- 读取方：hook（`ModuleController.processCommand`，`ModuleController.kt:242-264`），两条触发路径：`ContentObserver`（注册 `descendant = false`，`ModuleController.kt:157-162`）与 30 s tick 里的 `processCommand()`。
+- 读取方：hook（`ModuleController.processCommand`，`ModuleController.kt:242-264`），两条触发路径：`ContentObserver`（注册 `descendant = false`，`ModuleController.kt:157-162`）与每个 tick（5 s）里的 `processCommand()`。
 - 与 `policy` 共用一个 observer 回调，但注册成两条 URI：
 
 ```text
@@ -213,7 +213,7 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 | `processes` / `resources` / `thawOn` | 为空（`isEmpty` / 全 `follow`） |
 | `note` | `isBlank()` |
 
-`encodeGlobal`（`PolicyCodec.kt:154-161`）恒写 `enabled / forceFreezeOnBackground / audit / patchLists / compactEvents` 五个布尔；`defaultDelayMs` 仅 `≠ 0`、`applyFreezeBinder` 仅 `≠ null` 时写。
+`encodeGlobal`（`PolicyCodec.kt:154-164`）恒写六个布尔：`enabled / forceFreezeOnBackground / audit / patchLists / compactEvents / filterPolarityInverted`；`defaultDelayMs` 仅 `≠ 0`、`applyFreezeBinder` 仅 `≠ null` 时写。
 
 手写 JSON 时带不带这些 0/空对象都等价——解码端 `oLong`/`oInt` 缺省即 `0`。
 
@@ -518,12 +518,21 @@ UI 上这些位的三态选择器带 `locked = true`（`ui/pages/PagesApps.kt:42
 ```
 start()                                   → 90 s 后 markStable() + publishHeartbeat()
 ensureContext() 成功                      → publishHeartbeat()
-每 30 s tick（TICK_MS = 30_000）
+每 6 个 tick（TICK_MS = 5_000，即约 30 s）  → publishHeartbeat()
 命令执行完                                 → publishHeartbeat()
-策略 revision 变化（tick 检测到）
+策略 revision 变化（tick 检测到）           → publishHeartbeat()
 ```
 
-即「最多等 30 s 就能从心跳看到变化」；命令路径是立即刷新。
+要点：
+
+| 项 | 值 | 出处 |
+|---|---|---|
+| tick 周期 | `TICK_MS = 5_000` | `ModuleController.kt:369-370` |
+| 心跳节流 | 每 `HEARTBEAT_EVERY_TICKS = 6` 个 tick 一次，即约 30 s | `ModuleController.kt:370`、`tick()` 里的 `tickCount % HEARTBEAT_EVERY_TICKS == 0` |
+| 策略重读 | **每个** tick 都调 `PolicyStore.reload()`（5 s 兜底） | `ModuleController.tick()` |
+| 事件/日志 flush | 每个 tick 都投递，但各自有 dirty 判断与 15 s 节流 | `ModuleTelemetry.kt:92-99, 112-117` |
+
+即：**策略/命令最快 5 s 内被看到**（观察者触发时是即时），**心跳本身约 30 s 一次**；命令路径与 revision 变化都会立即刷新心跳。
 
 ---
 
@@ -582,7 +591,7 @@ ensureContext() 成功                      → publishHeartbeat()
 |---|---|
 | 环形容量 | **120 行**（`Module.LOG_RING`，`core/Keys.kt:57`） |
 | 实现 | `Logx` 内 `ArrayDeque<String>(120)`，`synchronized` 保护，溢出丢最旧并累加内部 `dropped` 计数（`module/Logx.kt:13, 26-43`） |
-| 行格式 | `<级别字母> <消息>[ | <异常类名>: <异常消息>]`，级别字母 `V/D/I/W/E`（`Logx.kt:49-55`） |
+| 行格式 | `<级别字母> <消息>`；带异常时追加 ` \| <异常类名>: <异常消息>`。级别字母 `V/D/I/W/E`（`Logx.kt:49-55`） |
 | 镜像 | 同时写 Xposed 日志，tag = `HyperGreeze`（`Module.TAG`，`core/Keys.kt:46`），因此 `adb logcat -s HyperGreeze` 能看 live 日志 |
 | 落盘 | `flushLogs()`，15 s 节流（`ModuleTelemetry.kt:112-117, 158`） |
 | 异常安全 | `Logx` 内部 `catch` 掉 sink 异常（`Logx.kt:38-42`）——日志失败不影响 `system_server` |

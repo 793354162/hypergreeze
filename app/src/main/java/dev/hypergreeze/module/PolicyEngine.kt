@@ -71,9 +71,16 @@ class PolicyEngine(val policy: Policy) {
             FreezeMode.NEVER -> false
             FreezeMode.IMMEDIATE, FreezeMode.CUSTOM -> {
                 val app = appPolicy(pkg)!!
-                if (app.maskKeep and reason != 0) return false
-                if (app.maskDrop and reason != 0) return true
-                original
+                val override = when {
+                    app.maskKeep and reason != 0 -> false
+                    app.maskDrop and reason != 0 -> true
+                    else -> null
+                }
+                when {
+                    override == null -> original
+                    policy.global.filterPolarityInverted -> !override
+                    else -> override
+                }
             }
         }
     }

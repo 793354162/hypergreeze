@@ -45,7 +45,7 @@ Hook id 是稳定字符串常量，定义在 `module/HookInstaller.kt:515-523`�
 | 5 | `installForeground()`（176-182） | `foreground` |
 | 6 | `installScreenOnThaw()`（184-190） | `screen-on-thaw` |
 
-`ORDER`（`HookInstaller.kt:525-534`）只是 8 个固定 id 的清单，**含构造器 hook 之外的全部**；构造器 hook 的 id 由 `"$ID_CAPTURE_CTOR-$index"` 拼出（121-122），`ID_CAPTURE_CTOR` 本身不是完整 id。
+`ORDER`（`HookInstaller.kt:525-534`）是 8 个固定 id 的清单，**不含构造器 hook**；构造器 hook 的 id 由 `"$ID_CAPTURE_CTOR-$index"` 拼出（121-122），`ID_CAPTURE_CTOR` 本身不是完整 id。因此一次启动实际安装的 hook 数是 `8 + 构造器个数`。
 
 ---
 
@@ -93,7 +93,7 @@ adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"capture-c
 | 目标类 | `com.miui.server.greeze.GreezeManagerService` |
 | 方法 | `init(android.content.Context)` → `void`，包内可见（契约 §A.8；§H-10 要求 `setAccessible`） |
 | 描述符 | `(Landroid/content/Context;)V` |
-| 解析 | `refs.m("init")`，spec 为 `MethodSpec("init", ["init"], arity = 1)`（`GreezeProbe.kt:160`） |
+| 解析 | `refs.m("init")`，spec 为 `MethodSpec("init", arrayOf("init"), 1)`（`GreezeProbe.kt:160`） |
 
 **拦截语义**
 
@@ -289,7 +289,7 @@ adb shell settings get system greeze_ctl_heartbeat_v1 | grep -o '"id":"wakeup-li
 
 **拦截语义**：与 §4 完全共用 `bodyWhitelist`（`HookInstaller.kt:161-165` 装配 → `246-269` 实现），判定表同 `whitelistVerdict`（`NEVER` → `true`；`IMMEDIATE`/`CUSTOM` 且 drop 了 `NO_RESTRICT` → `false`；否则 `original`）。先 `proceed()`，再改写。
 
-**失败模式与兜底**：同 §4（`original` + 错误计数）。`isTempWhite` 语义是「临时白名单」，季节/时段性放行由 GreeZe 自己维护（`TEST_TEMP_WHITE`，契约 §A.7），模块只覆盖返回值，不写那个集合。
+**失败模式与兜底**：同 §4（`original` + 错误计数）。`isTempWhite` 语义是「临时白名单」，名单本身由 GreeZe 维护（`TEST_TEMP_WHITE` 集合，契约 §A.7），模块只覆盖返回值，**不写那个集合**。
 
 **MISSING 行为**：状态 `missing`，能力位 `tempWhite=false`（`GreezeProbe.kt:49`）。后果：少一条「NEVER 强制白名单」路径。
 
@@ -370,7 +370,7 @@ adb shell cat /sys/fs/cgroup/uid_<UID>/cgroup.freeze   # 期望 0（未被冻）
 
 **MISSING 行为**：状态 `missing`，能力位 `foreground=false`（`GreezeProbe.kt:50`）。后果：`IMMEDIATE` 模式的「退后台立即冻结」完全失效（没有触发器），`NEVER`/掩码仍生效；`delayMs`、`thawCooldownMs`、`forceFreezeOnBackground` 一并变成空配置。
 
-**uid/pid 参数顺序未确证**：见 §12。
+**uid/pid 参数顺序未确证**：见 §11。
 
 **验证**
 

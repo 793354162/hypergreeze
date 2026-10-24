@@ -347,7 +347,7 @@ fun EventsPage(
             }
         }
 
-        items(items = filtered, key = { "${it.ts}-${it.type}-${it.uid}-${it.result}" }) { event ->
+        items(items = filtered) { event ->
             Block {
                 MiuixCard { EventLine(event) }
             }
@@ -365,6 +365,7 @@ fun DiagnosticsPage(
     onRequestSafeMode: () -> Unit,
     onClearSafeMode: () -> Unit,
     onApplyLists: () -> Unit,
+    onToggleFilterPolarity: (Boolean) -> Unit,
 ) {
     val colors = MiuixTheme.colors
     val clipboard = LocalClipboardManager.current
@@ -481,6 +482,17 @@ fun DiagnosticsPage(
                         subtitle = selfTest,
                         value = "运行",
                         onClick = { selfTest = onSelfTest() },
+                    )
+                    MiuixDivider()
+                    MiuixRow(
+                        title = "反射 filter 极性反转",
+                        subtitle = "掩码行为与预期相反时才打开（只反转模块的改写，不改系统答案）",
+                        trailing = {
+                            MiuixSwitch(
+                                checked = state.policy.global.filterPolarityInverted,
+                                onCheckedChange = onToggleFilterPolarity,
+                            )
+                        },
                     )
                     MiuixDivider()
                     MiuixRow(
