@@ -239,6 +239,11 @@ fun MiuixTabBar(
         tabs.forEachIndexed { index, (label, icon) ->
             val selected = index == selectedIndex
             val tint = if (selected) colors.primary else colors.textHint
+            val pillAlpha by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (selected) 1f else 0f,
+                animationSpec = androidx.compose.animation.core.tween(160),
+                label = "tab-pill",
+            )
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -250,7 +255,17 @@ fun MiuixTabBar(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                MiuixIcon(vector = icon, tint = tint, size = 22.dp)
+                Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 46.dp, height = 26.dp)
+                            .background(
+                                colors.primary.copy(alpha = 0.10f * pillAlpha),
+                                CircleShape,
+                            ),
+                    )
+                    MiuixIcon(vector = icon, tint = tint, size = 22.dp)
+                }
                 Spacer(Modifier.height(3.dp))
                 MiuixText(
                     text = label,

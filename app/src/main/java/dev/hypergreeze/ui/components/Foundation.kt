@@ -281,6 +281,11 @@ fun MiuixRow(
     val colors = MiuixTheme.colors
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    val rowBackground by androidx.compose.animation.animateColorAsState(
+        targetValue = if (pressed && onClick != null && enabled) colors.cardPressed else Color.Transparent,
+        animationSpec = androidx.compose.animation.core.tween(120),
+        label = "row-pressed",
+    )
     val rowModifier = Modifier
         .fillMaxWidth()
         .heightIn(min = Dimens.rowMinHeight)
@@ -295,6 +300,7 @@ fun MiuixRow(
                 Modifier
             },
         )
+        .background(rowBackground)
         .padding(horizontal = Dimens.rowPaddingH, vertical = Dimens.rowPaddingV)
     Row(
         modifier = modifier.then(rowModifier),

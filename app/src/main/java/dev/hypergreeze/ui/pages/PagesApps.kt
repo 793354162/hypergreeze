@@ -141,7 +141,12 @@ fun AppsPage(
 
         if (state.loading) {
             item(key = "loading") {
-                MiuixEmptyState(title = "正在读取应用列表…", icon = HgIcons.Apps)
+                Block {
+                    repeat(6) {
+                        MiuixCard { SkeletonRow() }
+                        Gap(6)
+                    }
+                }
             }
         } else if (filtered.isEmpty()) {
             item(key = "empty") {

@@ -436,6 +436,7 @@ fun DiagnosticsPage(
     onClearSafeMode: () -> Unit,
     onApplyLists: () -> Unit,
     onToggleFilterPolarity: (Boolean) -> Unit,
+    onOpenHelp: () -> Unit,
 ) {
     val colors = MiuixTheme.colors
     val clipboard = LocalClipboardManager.current
@@ -582,6 +583,13 @@ fun DiagnosticsPage(
                         title = "导出诊断报告",
                         subtitle = "复制到剪贴板",
                         onClick = { clipboard.setText(AnnotatedString(report())) },
+                    )
+                    MiuixDivider()
+                    MiuixRow(
+                        title = "帮助与试算",
+                        subtitle = "术语表 + 用原因位试算模块会怎么判",
+                        onClick = onOpenHelp,
+                        showArrow = true,
                     )
                     MiuixDivider()
                     MiuixRow(

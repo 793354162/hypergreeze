@@ -30,6 +30,48 @@ import java.util.Locale
 
 /** Horizontal page padding wrapper used by every card row in a page. */
 @Composable
+fun SkeletonRow(modifier: Modifier = Modifier) {
+    val colors = MiuixTheme.colors
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "skeleton")
+    val alpha by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.75f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(900),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "skeleton-alpha",
+    )
+    val blockColor = colors.secondaryContainer.copy(alpha = alpha)
+    Row(
+        modifier = modifier.fillMaxWidth().padding(horizontal = Dimens.rowPaddingH, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .background(blockColor, androidx.compose.foundation.shape.CircleShape),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.42f)
+                    .height(12.dp)
+                    .background(blockColor, androidx.compose.foundation.shape.RoundedCornerShape(6.dp)),
+            )
+            Spacer(Modifier.height(7.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.66f)
+                    .height(10.dp)
+                    .background(blockColor, androidx.compose.foundation.shape.RoundedCornerShape(5.dp)),
+            )
+        }
+    }
+}
+
+@Composable
 fun Block(content: @Composable ColumnScope.() -> Unit) {
     Column(
         modifier = Modifier

@@ -29,6 +29,7 @@ import dev.hypergreeze.ui.pages.AppDetailPage
 import dev.hypergreeze.ui.pages.AppsPage
 import dev.hypergreeze.ui.pages.DiagnosticsPage
 import dev.hypergreeze.ui.pages.EventsPage
+import dev.hypergreeze.ui.pages.HelpPage
 import dev.hypergreeze.ui.pages.HomePage
 import dev.hypergreeze.ui.pages.RevertSheetContent
 import dev.hypergreeze.ui.theme.HyperGreezeTheme
@@ -50,6 +51,7 @@ fun HyperGreezeApp(vm: MainViewModel) {
         val context = LocalContext.current
         var tab by rememberSaveable { mutableStateOf(0) }
         var detailPkg by rememberSaveable { mutableStateOf<String?>(null) }
+        var helpOpen by rememberSaveable { mutableStateOf(false) }
         var sheet by rememberSaveable { mutableStateOf(0) }
         var message by remember { mutableStateOf<String?>(null) }
 
@@ -81,6 +83,8 @@ fun HyperGreezeApp(vm: MainViewModel) {
                 Box(modifier = Modifier.weight(1f)) {
                     val pkg = detailPkg
                     when {
+                        helpOpen -> HelpPage(state = state, onBack = { helpOpen = false })
+
                         pkg != null -> AppDetailPage(
                             pkg = pkg,
                             state = state,
@@ -141,10 +145,11 @@ fun HyperGreezeApp(vm: MainViewModel) {
                             onToggleFilterPolarity = { value ->
                                 vm.setGlobal { g -> g.copy(filterPolarityInverted = value) }
                             },
+                            onOpenHelp = { helpOpen = true },
                         )
                     }
                 }
-                if (detailPkg == null) {
+                if (detailPkg == null && !helpOpen) {
                     MiuixTabBar(
                         tabs = TABS,
                         selectedIndex = tab,
@@ -185,6 +190,8 @@ fun HyperGreezeApp(vm: MainViewModel) {
             }
         }
 
-        BackHandler(enabled = detailPkg != null) { detailPkg = null }
+        BackHandler(enabled = detailPkg != null || helpOpen) {
+            if (helpOpen) helpOpen = false else detailPkg = null
+        }
     }
 }
