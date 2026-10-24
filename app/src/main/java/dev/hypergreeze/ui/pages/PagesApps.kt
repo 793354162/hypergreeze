@@ -38,6 +38,7 @@ import dev.hypergreeze.core.ThawTriggers
 import dev.hypergreeze.ui.components.BitState
 import dev.hypergreeze.ui.components.ButtonStyle
 import dev.hypergreeze.ui.components.HgIcons
+import dev.hypergreeze.ui.components.MiuixBadge
 import dev.hypergreeze.ui.components.MiuixBottomSheet
 import dev.hypergreeze.ui.components.MiuixButton
 import dev.hypergreeze.ui.components.MiuixCard
@@ -214,6 +215,13 @@ fun AppDetailPage(
             title = entry?.label ?: pkg,
             subtitle = "$pkg · uid ${entry?.uid ?: "?"}",
             onBack = onBack,
+            headerExtra = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AppIcon(pkg, 40.dp)
+                    Spacer(Modifier.width(10.dp))
+                    MiuixBadge(text = app.mode.label, color = modeColorOf(app.mode, colors))
+                }
+            },
         ) {
             item(key = "explain") {
                 Block {

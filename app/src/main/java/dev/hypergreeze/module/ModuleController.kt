@@ -433,7 +433,9 @@ class ModuleController(
         SysProp.setInt(SafetyGuard.PROP_GUARD, 0)
         SysProp.setInt(SafetyGuard.PROP_SAFE, 0)
         SysProp.set(SafetyGuard.PROP_SAFE_REASON, "")
-        Logx.w("cleared $deleted settings keys + hypergreeze properties")
+        // Without this the very next heartbeat would recreate our keys a few seconds later.
+        tm.silenced = true
+        Logx.w("cleared $deleted settings keys + hypergreeze properties; telemetry silenced")
         return "已清除 $deleted 个设置键与全部模块属性"
     }
 

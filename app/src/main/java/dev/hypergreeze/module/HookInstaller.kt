@@ -359,7 +359,8 @@ class HookInstaller(
                 result = Module.RESULT_SKIP_BY_MOD,
                 detail = "never-freeze policy",
             )
-            telemetry?.flushEvents()
+            // No flush here: this runs on GreeZe's own callback thread and a Settings write per
+            // blocked request would be amplified whenever GreeZe retries. The 5s tick flushes.
             // Skipping `proceed()` is what actually prevents the cgroup write; the returned string
             // only tells GreeZe "not frozen" so its own state machine stays consistent.
             return Module.RESULT_SKIP_BY_MOD
@@ -491,7 +492,6 @@ class HookInstaller(
             applyResources(uid, pkg)
             val result = facade.freezeUid(uid, 0L, Module.REASON_MOD, Module.FREEZE_TAG, 0)
             telemetry?.record(EventType.FREEZE, uid, pkg, Module.REASON_MOD, result, "forced pid=$pid")
-            telemetry?.flushEvents()
             Logx.i("forced freeze uid=$uid pkg=$pkg result=$result")
         } catch (t: Throwable) {
             Logx.w("forcedFreeze failed uid=$uid", t)

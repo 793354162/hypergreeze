@@ -14,6 +14,7 @@
 |---|---|---|---|
 | 键 | `greeze_ctl_policy_v1` | App → hook | JSON object（策略文档） |
 | 键 | `greeze_ctl_command_v1` | App → hook | JSON object（一次性命令） |
+| 键 | `greeze_ctl_journal_v1` | hook → App | JSON array（副作用账本，≤200 条，见 §2.8） |
 | 键 | `greeze_ctl_heartbeat_v1` | hook → App | JSON object |
 | 键 | `greeze_ctl_events_v1` | hook → App | JSON array（≤60 条） |
 | 键 | `greeze_ctl_logs_v1` | hook → App | JSON array（≤120 行字符串） |
@@ -163,7 +164,8 @@ registerContentObserver(Settings.System.getUriFor(Keys.POLICY),  false, observer
 | `audit` | bool | `true` | `true`/`false` | 关掉后 `freezeUid` 的审计事件不再写（`HookInstaller.kt:320`） |
 | `patchLists` | bool | `false` | `true`/`false` | `true` 时策略加载/每次 revision 变化后自动执行一次 `applyLists()`（写 `mNoRestrictAppSet` / `mGrabTicketsAppList`）；手动命令 `applyLists` 不看这个开关 |
 | `compactEvents` | bool | `false` | `true`/`false` | `true` 时事件环上限从 60 降到 20（`ModuleTelemetry.eventCap`），由 `ModuleController.applyGlobalSideEffects` 在加载/revision 变化时设置 |
-| `filterPolarityInverted` | bool | `false` | `true`/`false` | `true` 时把 `filter` 的**模块覆写**取反（`PolicyEngine.kt:80-81`）；只反转模块自己的答案，系统原值不动。属于「掩码行为与该 ROM 相反」时的逃生开关（诊断页有对应开关） |
+| `filterPolarityInverted` | bool | `false` | `true`/`false` | `true` 时把 `filter` 的**模块覆写**取反（`PolicyEngine.kt`）；只反转模块自己的答案，系统原值不动。属于「掩码行为与该 ROM 相反」时的逃生开关（诊断页有对应开关） |
+| `uiExpert` | bool | `false` | `true`/`false` | 纯 UI 开关：`false` 只显示四态 + 一个延时滑块；`true` 才显示 32 位掩码、子进程、资源联动、解冻条件。不改变任何 hook 行为 |
 | `defaultDelayMs` | long | `0` | `0..600000`（解码 `coerceIn`，`PolicyCodec.kt:171`） | app 的 `delayMs` 为 0 时才用它（`PolicyEngine.kt:39-42`） |
 | `applyFreezeBinder` | bool? | `null` | `true`/`false`/缺省 | 非 `null` 时在策略加载/revision 变化后调用一次 `setFreezeBinderEnableCloud(boolean)`（结果写进事件环）；`null` = 不动系统开关。也可用 `setFreezeBinder` 命令单独触发 |
 
@@ -419,6 +421,10 @@ UI 上这些位的三态选择器带 `locked = true`（`ui/pages/PagesApps.kt:42
 | 8 | `clearSafeMode` | `OP_CLEAR_SAFE_MODE` | 无 | `guard.clearSafeMode()` + `installer.passive = false` | `ok`（无条件） | — |
 | 9 | `applyLists` | `OP_APPLY_LISTS` | 无 | `patchListField("mNoRestrictAppSet", never)` + `patchListField("mGrabTicketsAppList", immediate)` | `ok(never=<N>,immediate=<M>)` | `fail`（两个字段都没打上）或 `no-policy`（引擎未就绪） |
 | 10 | `setFreezeBinder` | `OP_SET_BINDER` | `arg` = `"1"`/`"0"` | `facade.setFreezeBinderEnabled(arg == "1")` → `setFreezeBinderEnableCloud(boolean)` | `ok` | `fail` |
+| 11 | `revertAll` | `OP_REVERT_ALL` | 无 | `Effector.revertAll()`：`suppressed=true` → `thawAll()` → 账本倒序反做 → 清账本 → 记一条 `revert` | 一段人类可读汇总，如 `已还原 3 项；未能还原 1 项：Job 限制…` | `no-effector`（hook 侧未就绪） |
+| 12 | `clearData` | `OP_CLEAR_DATA` | 无 | 先 `revertAll()`，再删除 `Keys.ALL` 全部设置键 + 三个 `persist.sys.hypergreeze.*` | `<revert 汇总>；已清除 N 个设置键与全部模块属性` | 同上 |
+
+> 这两个 op 是「可恢复性」的入口，语义差异见 [REVERSIBILITY.md](REVERSIBILITY.md)：`revertAll` 保留策略、只撤回外部改动；`clearData` 连策略与账本一起删，给卸载前用。
 
 ### 5.4 失败串全集
 
@@ -474,6 +480,9 @@ UI 上这些位的三态选择器带 `locked = true`（`ui/pages/PagesApps.kt:42
 | `lastSeq` | `lastCommandSeq` | long | `0` | 已消费的最高命令序号（§5.2） |
 | `hooks` | `hooks` | array | `[]` | 见 §6.2 |
 | `caps` | `capabilities` | object | `{}` | 见 §6.3 |
+| `lastSeq` | `lastCommandSeq` | long | `0` | 已消费的最高命令序号（§5.2） |
+| `journal` | `journalUndoable` | int | `0` | 账本里当前还能还原的条数（`op.reversible && ok`） |
+| `suppressed` | `suppressed` | bool | `false` | 刚执行过还原，模块暂停施加资源限制，直到策略 revision 变化 |
 
 ### 6.2 `hooks[]`（`HookStatus`，`core/State.kt:70-77`）
 

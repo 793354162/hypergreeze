@@ -21,6 +21,7 @@ import dev.hypergreeze.ui.data.SettingsGateway
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -100,6 +101,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshAll() {
+        viewModelScope.launch { refreshAllNow() }
+    }
+
+    private suspend fun refreshAllNow() {
         val canWrite = gateway.canWrite()
         val policy = gateway.readPolicy()
         _state.update {
@@ -108,10 +113,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshTelemetry()
     }
 
-    private fun refreshTelemetry() {
+    private suspend fun refreshTelemetry() {
         val hb = gateway.readHeartbeat()
-        // Compare the raw strings first: decoding 60 events + 120 log lines every 2.5s on the main
-        // thread is wasted work when nothing changed (which is the normal case).
+        // Compare the raw strings first: decoding 60 events + 120 log lines + 200 journal entries
+        // every 2.5s is wasted work when nothing changed (which is the normal case). When something
+        // did change, the decode happens on Default instead of the main thread.
         val eventsRaw = gateway.readRaw(Keys.EVENTS)
         val logsRaw = gateway.readRaw(Keys.LOGS)
         val journalRaw = gateway.readRaw(Keys.JOURNAL)
@@ -119,17 +125,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val events = if (eventsRaw == lastEventsRaw) {
             current.events
         } else {
-            TelemetryCodec.decodeEvents(eventsRaw).asReversed()
+            withContext(Dispatchers.Default) { TelemetryCodec.decodeEvents(eventsRaw).asReversed() }
         }
         val logs = if (logsRaw == lastLogsRaw) {
             current.logs
         } else {
-            TelemetryCodec.decodeLogs(logsRaw)
+            withContext(Dispatchers.Default) { TelemetryCodec.decodeLogs(logsRaw) }
         }
         val journal = if (journalRaw == lastJournalRaw) {
             current.journal
         } else {
-            dev.hypergreeze.core.JournalCodec.decode(journalRaw).asReversed()
+            withContext(Dispatchers.Default) {
+                dev.hypergreeze.core.JournalCodec.decode(journalRaw).asReversed()
+            }
         }
         lastEventsRaw = eventsRaw
         lastLogsRaw = logsRaw

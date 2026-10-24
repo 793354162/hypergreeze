@@ -95,17 +95,20 @@ class Effector(
 
     fun netRestrict(uid: Int, pkg: String?, restrict: Boolean) {
         if (suppressed) return
-        // No getter exists for this one: `before` stays null on purpose.
-        val ok = facade.setUdpRestrict(uid, restrict)
+        // Only ever *tighten*. There is no getter for the previous firewall state, so relaxing
+        // would be an irreversible guess — `ResourceSwitches` documents "never relaxes a
+        // system-side restriction" and this guard is what enforces it.
+        if (!restrict) return
+        val ok = facade.setUdpRestrict(uid, true)
         record(
             op = EffectOp.NET_RESTRICT,
             target = targetOf(uid, pkg),
             uid = uid,
             pkg = pkg,
             before = null,
-            after = restrict.toString(),
+            after = "true",
             ok = ok,
-            note = if (restrict) "原值不可读" else "放开网络，无法判断原本状态",
+            note = "原值不可读",
         )
     }
 
@@ -125,15 +128,17 @@ class Effector(
 
     fun wakelockLimit(uid: Int, pkg: String?, limit: Boolean) {
         if (suppressed) return
+        // Same rule as net: a "false" switch means "don't add a restriction", not "relax one".
+        if (!limit) return
         val before = facade.isWakeLockLimit(uid)?.toString()
-        val ok = facade.setWakeLockLimit(uid, limit)
+        val ok = facade.setWakeLockLimit(uid, true)
         record(
             op = EffectOp.WAKELOCK_LIMIT,
             target = targetOf(uid, pkg),
             uid = uid,
             pkg = pkg,
             before = before,
-            after = limit.toString(),
+            after = "true",
             ok = ok,
         )
     }

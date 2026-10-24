@@ -86,7 +86,7 @@
 | `before` | `facade.isWakeLockLimit(uid)?.toString()` → `"true"`/`"false"`；getter 不存在时 **null** |
 | `after` | `"true"` / `"false"` |
 | `ok` | `callUnit("updateWakeLockLimit", uid, limit)`；这是契约里的 orphan 方法（LIMITS §3-4） |
-| 逆操作 | `setWakeLockLimit(uid, entry.before.toBooleanStrict())` |
+| 逆操作 | `setWakeLockLimit(uid, entry.before.toBooleanStrictOrNull())`（解析不出就跳过） |
 | 能否还原 | 能，前提是 `before` 读到了 |
 | 失败/不可还原表现 | `before` 为 null → `"Wakelock 原值未知（uid N）"`；写回失败 → `"Wakelock 还原失败（uid N）"` |
 
@@ -98,7 +98,7 @@
 | `before` | `facade.isFreezeBinderEnabled()?.toString()`（getter 名 `getFreezeBinderEnable`）；缺失时 null |
 | `after` | `"true"` / `"false"` |
 | `ok` | `callUnit("setFreezeBinderEnableCloud", enabled)` |
-| 逆操作 | `setFreezeBinderEnabled(before)` |
+| 逆操作 | `setFreezeBinderEnabled(before)`（同样用 `toBooleanStrictOrNull()` 解析 `before`） |
 | 能否还原 | 能，前提是 `before` 读到了。这是**全局**开关，不是逐 App |
 | 失败/不可还原表现 | `"freezeBinder 原值未知"` / `"freezeBinder 还原失败"` |
 

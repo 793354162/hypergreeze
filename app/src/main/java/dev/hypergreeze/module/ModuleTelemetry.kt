@@ -41,6 +41,13 @@ class ModuleTelemetry(private val context: Context) {
     @Volatile
     var eventCap: Int = Module.EVENT_RING
 
+    /**
+     * Set by "彻底清理": once the user asked us to delete our keys, writing a heartbeat back a few
+     * seconds later would defeat the point. All Settings writes become no-ops.
+     */
+    @Volatile
+    var silenced: Boolean = false
+
     private val journal = JournalRing(Module.JOURNAL_RING)
     private var journalDirty = false
 
@@ -180,21 +187,20 @@ class ModuleTelemetry(private val context: Context) {
     fun readInt(key: String, def: Int = 0): Int =
         readString(key)?.trim()?.toIntOrNull() ?: def
 
-    fun writeString(key: String, value: String?): Boolean = try {
-        val ok = if (value == null) {
-            Settings.System.putString(context.contentResolver, key, null)
-        } else {
-            Settings.System.putString(context.contentResolver, key, value)
-        }
-        if (!ok) {
+    fun writeString(key: String, value: String?): Boolean {
+        if (silenced) return false
+        return try {
+            val ok = Settings.System.putString(context.contentResolver, key, value)
+            if (!ok) {
+                writeFailures++
+                if (writeFailures <= 3) Logx.w("settings write rejected for $key")
+            }
+            ok
+        } catch (t: Throwable) {
             writeFailures++
-            if (writeFailures <= 3) Logx.w("settings write rejected for $key")
+            if (writeFailures <= 3) Logx.w("settings write failed for $key", t)
+            false
         }
-        ok
-    } catch (t: Throwable) {
-        writeFailures++
-        if (writeFailures <= 3) Logx.w("settings write failed for $key", t)
-        false
     }
 
     fun writeInt(key: String, value: Int): Boolean = writeString(key, value.toString())
