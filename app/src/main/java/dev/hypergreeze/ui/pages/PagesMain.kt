@@ -172,6 +172,18 @@ fun HomePage(
             }
         }
 
+        if (hb?.suppressed == true) {
+            item(key = "suppressed") {
+                Gap()
+                Block {
+                    MiuixNoticeBar(
+                        text = "已执行还原：模块暂停施加资源限制；修改任一策略或重新打开总开关即恢复。",
+                        tone = NoticeTone.INFO,
+                    )
+                }
+            }
+        }
+
         if (hb != null && !hb.greezePresent) {
             item(key = "nogreeze") {
                 Gap()
@@ -458,6 +470,10 @@ fun DiagnosticsPage(
                     MiuixRow("安全模式", value = if (hb?.safeMode == true) "是" else "否")
                     MiuixDivider()
                     MiuixRow("启动守卫计数", value = "${hb?.bootGuard ?: 0}")
+                    MiuixDivider()
+                    MiuixRow("可还原改动", value = "${hb?.journalUndoable ?: 0} 项")
+                    MiuixDivider()
+                    MiuixRow("还原后抑制", value = if (hb?.suppressed == true) "是（改策略解除）" else "否")
                     MiuixDivider()
                     MiuixRow("策略 revision", value = "${hb?.revision ?: 0}")
                     MiuixDivider()
