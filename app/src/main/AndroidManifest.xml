@@ -20,6 +20,24 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.HyperGreeze">
 
+        <!-- Downlink: app -> system_server. Read-only, and only system/root/self may read it. -->
+        <provider
+            android:name=".data.PolicyProvider"
+            android:authorities="dev.hypergreeze.policy"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+
+        <!-- Diagnostics report export (share sheet). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="dev.hypergreeze.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"

@@ -149,8 +149,8 @@ fun HomePage(
                 Gap()
                 Block {
                     MiuixNoticeBar(
-                        text = "未授予「修改系统设置」权限，策略只读。",
-                        tone = NoticeTone.WARNING,
+                        text = "未授予「修改系统设置」：策略写入不受影响（走 provider 通道），仅 Settings 镜像与安全模式请求不可用。",
+                        tone = NoticeTone.INFO,
                         actionLabel = "去授权",
                         onAction = onOpenWriteSettings,
                     )
@@ -442,7 +442,7 @@ fun EventsPage(
 fun DiagnosticsPage(
     state: UiState,
     onSelfTest: () -> String,
-    report: () -> String,
+    onExportReport: () -> Unit,
     onRefresh: () -> Unit,
     onRequestSafeMode: () -> Unit,
     onClearSafeMode: () -> Unit,
@@ -451,7 +451,6 @@ fun DiagnosticsPage(
     onOpenHelp: () -> Unit,
 ) {
     val colors = MiuixTheme.colors
-    val clipboard = LocalClipboardManager.current
     var selfTest by remember { mutableStateOf<String?>(null) }
     val hb = state.heartbeat
 
@@ -464,6 +463,17 @@ fun DiagnosticsPage(
                     MiuixDivider()
                     MiuixRow("框架", value = (hb?.frameworkName ?: "—") + " " + (hb?.frameworkVersion ?: ""))
                     MiuixRow("API", value = "${hb?.apiVersion ?: 0}")
+                    MiuixDivider()
+                    MiuixRow(
+                        title = "策略通道",
+                        subtitle = "hook 侧最后一次读到策略的来源",
+                        value = hb?.channel ?: "none",
+                        valueColor = when (hb?.channel) {
+                            "provider" -> colors.success
+                            "settings" -> colors.warning
+                            else -> colors.danger
+                        },
+                    )
                     MiuixDivider()
                     MiuixRow("进程", value = hb?.processName ?: "—")
                     MiuixDivider()
@@ -560,8 +570,9 @@ fun DiagnosticsPage(
                 MiuixCard {
                     MiuixRow(
                         title = "WRITE_SETTINGS",
+                        subtitle = "仅影响 Settings 镜像与安全模式请求；策略主通道走 provider",
                         value = if (state.canWriteSettings) "已授权" else "未授权",
-                        valueColor = if (state.canWriteSettings) colors.success else colors.danger,
+                        valueColor = if (state.canWriteSettings) colors.success else colors.textHint,
                     )
                     MiuixDivider()
                     MiuixRow(
@@ -597,8 +608,9 @@ fun DiagnosticsPage(
                 MiuixCard {
                     MiuixRow(
                         title = "导出诊断报告",
-                        subtitle = "复制到剪贴板",
-                        onClick = { clipboard.setText(AnnotatedString(report())) },
+                        subtitle = "写入应用文件并打开分享（不再用剪贴板）",
+                        onClick = onExportReport,
+                        showArrow = true,
                     )
                     MiuixDivider()
                     MiuixRow(

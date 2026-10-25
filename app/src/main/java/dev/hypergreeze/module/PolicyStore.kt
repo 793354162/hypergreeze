@@ -6,32 +6,41 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import dev.hypergreeze.core.Channel
 import dev.hypergreeze.core.Keys
 import dev.hypergreeze.core.Policy
 import dev.hypergreeze.core.PolicyCodec
 
 /**
- * Reads the policy document out of `Settings.System` inside `system_server`.
+ * Reads the policy document inside `system_server`.
  *
- * Only ever reads: the app is the single writer, so there is no cross-process write race and no
- * need for a Binder service. A [ContentObserver] makes changes take effect in well under a second;
- * a slow poll in [PolicyScheduler] is the belt-and-braces fallback for ROMs where the observer
- * does not fire for a system-setting write made by another uid.
+ * Two sources, in this order:
+ *
+ *  1. **`content://dev.hypergreeze.policy/policy`** — the app owns the data (SharedPreferences) and
+ *     serves it read-only. This is the primary path because `Settings.System.putString` can be
+ *     refused for a third-party app on some HyperOS builds even with `WRITE_SETTINGS` granted.
+ *  2. **`Settings.System["greeze_ctl_policy_v1"]`** — fallback and adb-friendly mirror.
+ *
+ * Reading the provider can start the app process, so [reload] takes `allowProvider`: the periodic
+ * tick reads only Settings (cheap, never starts anything), while boot, content-observer callbacks
+ * and command handling are allowed to query the provider.
  */
 class PolicyStore(private val context: Context) {
 
     @Volatile
     private var cached: Policy = Policy.EMPTY
 
-    /**
-     * Rebuilt only when the document actually changes. `HookInstaller` asks for an engine on every
-     * hook invocation (`filter` runs constantly), so allocating one per call would be pure garbage.
-     */
+    /** Rebuilt only when the document actually changes: hook hot paths ask for it constantly. */
     @Volatile
     private var cachedEngine: PolicyEngine = PolicyEngine(Policy.EMPTY)
 
     @Volatile
     private var rawCache: String? = null
+
+    /** Which source produced [rawCache]; surfaced in the heartbeat. */
+    @Volatile
+    var lastChannel: String = Channel.NONE
+        private set
 
     @Volatile
     var lastReloadAt: Long = 0L
@@ -48,54 +57,7 @@ class PolicyStore(private val context: Context) {
     val raw: String? get() = rawCache
 
     fun start() {
-        reload()
-        if (observer == null) {
-            val obs = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                override fun onChange(selfChange: Boolean, uri: Uri?) {
-                    try {
-                        reload()
-                    } catch (t: Throwable) {
-                        Logx.w("policy observer reload failed", t)
-                    }
-                }
-            }
-            observer = obs
-            try {
-                context.contentResolver.registerContentObserver(
-                    Settings.System.getUriFor(Keys.POLICY),
-                    true,
-                    obs,
-                )
-            } catch (t: Throwable) {
-                Logx.w("registerContentObserver failed, falling back to polling", t)
-            }
-        }
-    }
-
-    /** Returns true when the effective policy changed. */
-    fun reload(): Boolean {
-        val raw = readRaw()
-        lastReloadAt = System.currentTimeMillis()
-        if (raw == rawCache) return false
-        val parsed = PolicyCodec.decode(raw)
-        val changed = parsed != cached
-        if (changed) {
-            cachedEngine = PolicyEngine(parsed)
-        }
-        rawCache = raw
-        cached = parsed
-        reloadCount++
-        if (changed) {
-            Logx.i("policy reloaded: ${cachedEngine.summary()}")
-        }
-        return changed
-    }
-
-    private fun readRaw(): String? = try {
-        Settings.System.getString(context.contentResolver, Keys.POLICY)
-    } catch (t: Throwable) {
-        Logx.w("read policy failed", t)
-        null
+        registerObservers()
     }
 
     fun stop() {
@@ -107,5 +69,91 @@ class PolicyStore(private val context: Context) {
             }
         }
         observer = null
+    }
+
+    private fun registerObservers() {
+        if (observer != null) return
+        val obs = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                try {
+                    reload(allowProvider = true)
+                } catch (t: Throwable) {
+                    Logx.w("policy observer reload failed", t)
+                }
+            }
+        }
+        observer = obs
+        // Provider notifications (app -> hook) plus the Settings mirror, plus the command URI.
+        for (uri in listOf(
+            Keys.URI_POLICY,
+            Keys.URI_COMMAND,
+            Settings.System.getUriFor(Keys.POLICY).toString(),
+            Settings.System.getUriFor(Keys.COMMAND).toString(),
+        )) {
+            try {
+                context.contentResolver.registerContentObserver(Uri.parse(uri), true, obs)
+            } catch (t: Throwable) {
+                Logx.w("registerContentObserver failed for $uri", t)
+            }
+        }
+    }
+
+    /** Returns true when the effective policy changed. */
+    fun reload(allowProvider: Boolean = true): Boolean {
+        val fromProvider = if (allowProvider) queryProvider(Keys.URI_POLICY) else null
+        val raw: String?
+        if (!fromProvider.isNullOrBlank()) {
+            raw = fromProvider
+            lastChannel = Channel.PROVIDER
+        } else {
+            val fromSettings = readSettings(Keys.POLICY)
+            raw = fromSettings
+            lastChannel = if (fromSettings.isNullOrBlank()) Channel.NONE else Channel.SETTINGS
+        }
+        lastReloadAt = System.currentTimeMillis()
+        if (raw == rawCache) return false
+
+        val parsed = PolicyCodec.decode(raw)
+        val changed = parsed != cached
+        if (changed) {
+            cachedEngine = PolicyEngine(parsed)
+        }
+        rawCache = raw
+        cached = parsed
+        reloadCount++
+        if (changed) {
+            Logx.i("policy reloaded via $lastChannel: ${cachedEngine.summary()}")
+        }
+        return changed
+    }
+
+    /** Command payload: provider first (app just wrote it), Settings as fallback. */
+    fun readCommand(): String? {
+        val fromProvider = queryProvider(Keys.URI_COMMAND)
+        if (!fromProvider.isNullOrBlank()) return fromProvider
+        return readSettings(Keys.COMMAND)
+    }
+
+    private fun queryProvider(uri: String): String? = try {
+        context.contentResolver.query(
+            Uri.parse(uri),
+            arrayOf("value"),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+        }
+    } catch (t: Throwable) {
+        // Provider not reachable yet (boot), app not installed, or SELinux: fall back silently.
+        Logx.w("provider read failed: ${t.javaClass.simpleName}")
+        null
+    }
+
+    private fun readSettings(key: String): String? = try {
+        Settings.System.getString(context.contentResolver, key)
+    } catch (t: Throwable) {
+        Logx.w("read $key failed", t)
+        null
     }
 }

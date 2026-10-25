@@ -20,13 +20,19 @@ import dev.hypergreeze.core.PolicyCodec
 import dev.hypergreeze.core.TelemetryCodec
 
 /**
- * The app half of the `Settings.System` channel.
+ * The app half of the app -> hook channel.
  *
- * Everything here is a plain read/write plus honest failure reporting: if `WRITE_SETTINGS` was not
- * granted (or MIUI rejected the key), the caller gets `false` and the UI explains how to fix it
- * instead of pretending the policy was saved.
+ * Primary path is the app's own SharedPreferences served by [dev.hypergreeze.data.PolicyProvider]:
+ * it needs no permission and cannot be blocked by a ROM's SettingsProvider. Every write is also
+ * mirrored into `Settings.System` on a best-effort basis (some ROMs accept it, and it keeps
+ * `adb shell settings get` useful), but the mirror is never what we report as success.
+ *
+ * The hook -> app direction (heartbeat / events / logs / journal) is read-only from here and still
+ * comes from `Settings.System`, where `system_server` is never blocked.
  */
 class SettingsGateway(private val context: Context) {
+
+    private val prefs by lazy { context.getSharedPreferences(Keys.PREFS, Context.MODE_PRIVATE) }
 
     fun canWrite(): Boolean = try {
         Settings.System.canWrite(context)
@@ -45,6 +51,7 @@ class SettingsGateway(private val context: Context) {
         null
     }
 
+    /** Settings mirror only. Used for the read-only telemetry keys and as a legacy fallback. */
     fun writeRaw(key: String, value: String?): Boolean {
         if (!canWrite()) return false
         return try {
@@ -54,9 +61,49 @@ class SettingsGateway(private val context: Context) {
         }
     }
 
-    fun readPolicy(): Policy = PolicyCodec.decode(readRaw(Keys.POLICY))
+    // ------------------------------------------------------------------ policy / command
 
-    fun writePolicy(policy: Policy): Boolean = writeRaw(Keys.POLICY, PolicyCodec.encode(policy))
+    private fun writePref(key: String, value: String, uri: String): Boolean {
+        val ok = try {
+            prefs.edit().putString(key, value).commit()
+        } catch (_: Throwable) {
+            false
+        }
+        if (ok) {
+            try {
+                context.contentResolver.notifyChange(Uri.parse(uri), null)
+            } catch (_: Throwable) {
+                // The hook side also polls every 5s, so a lost notification only costs latency.
+            }
+        }
+        return ok
+    }
+
+    fun readPolicy(): Policy = PolicyCodec.decode(prefs.getString(Keys.PREF_POLICY, null))
+
+    fun writePolicy(policy: Policy): Boolean {
+        val json = PolicyCodec.encode(policy)
+        val ok = writePref(Keys.PREF_POLICY, json, Keys.URI_POLICY)
+        // Mirror: harmless if the ROM refuses it, and keeps adb tooling working.
+        writeRaw(Keys.POLICY, json)
+        return ok
+    }
+
+    fun sendCommand(command: Command): Boolean {
+        val json = CommandCodec.encode(command)
+        val ok = writePref(Keys.PREF_COMMAND, json, Keys.URI_COMMAND)
+        writeRaw(Keys.COMMAND, json)
+        return ok
+    }
+
+    fun requestSafeMode(reason: String): Boolean {
+        writeRaw(Keys.SAFE_MODE_REASON, reason)
+        return writeRaw(Keys.SAFE_MODE_REQUEST, "1")
+    }
+
+    fun currentSeq(): Long = System.currentTimeMillis()
+
+    // ------------------------------------------------------------------ diagnostics
 
     fun readHeartbeat(): Heartbeat? = TelemetryCodec.decodeHeartbeat(readRaw(Keys.HEARTBEAT))
 
@@ -64,27 +111,47 @@ class SettingsGateway(private val context: Context) {
 
     fun readLogs(): List<String> = TelemetryCodec.decodeLogs(readRaw(Keys.LOGS))
 
-    fun sendCommand(command: Command): Boolean = writeRaw(Keys.COMMAND, CommandCodec.encode(command))
-
-    fun requestSafeMode(reason: String): Boolean {
-        writeRaw(Keys.SAFE_MODE_REASON, reason)
-        return writeRaw(Keys.SAFE_MODE_REQUEST, "1")
-    }
-
-    /** Round-trip self test used by the diagnostics page. */
+    /**
+     * Exercises the *real* downlink (prefs -> provider -> back) and reports the Settings mirror
+     * separately, because those two can disagree on this ROM.
+     */
     fun selfTest(): String {
-        if (!canWrite()) return "未授予「修改系统设置」权限"
-        val probe = "hypergreeze-probe-${System.currentTimeMillis()}"
-        val ok = writeRaw(Keys.SAFE_MODE_REASON, probe)
-        val back = readRaw(Keys.SAFE_MODE_REASON)
-        return when {
-            !ok -> "写入被拒绝（appop WRITE_SETTINGS 未生效？）"
-            back != probe -> "写入成功但读回不一致: $back"
-            else -> "写入/读回正常"
+        val probe = "probe-${System.currentTimeMillis()}"
+        val wrote = try {
+            prefs.edit().putString(Keys.PREF_PING, probe).commit()
+        } catch (_: Throwable) {
+            false
+        }
+        val viaPrefs = prefs.getString(Keys.PREF_PING, null) == probe
+        val viaProvider = try {
+            context.contentResolver.query(
+                Uri.parse(Keys.URI_PING),
+                arrayOf("value"),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        } catch (t: Throwable) {
+            "error:${t.javaClass.simpleName}"
+        }
+        val settingsOk = writeRaw(Keys.SAFE_MODE_REASON, probe) &&
+            readRaw(Keys.SAFE_MODE_REASON) == probe
+        return buildString {
+            append("provider 通道 ")
+            append(if (wrote && viaPrefs && viaProvider == probe) "正常" else "异常（$viaProvider）")
+            append("；Settings 镜像 ")
+            append(if (settingsOk) "可用" else "被 ROM 拒绝（不影响主通道）")
         }
     }
 
-    fun currentSeq(): Long = System.currentTimeMillis()
+    /** Human readable summary of which channel the hook side is actually using. */
+    fun downlinkHint(): String = if (canWrite()) {
+        "provider 为主，Settings 作镜像"
+    } else {
+        "provider 为主（无需 WRITE_SETTINGS）"
+    }
 }
 
 data class AppEntry(

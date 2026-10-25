@@ -103,6 +103,8 @@ data class Heartbeat(
     val journalUndoable: Int = 0,
     /** True once the hook side has reverted and is refusing to re-apply until the policy changes. */
     val suppressed: Boolean = false,
+    /** Which source the hook side last read the policy from: `provider` / `settings` / `none`. */
+    val channel: String = Channel.NONE,
     val hooks: List<HookStatus> = emptyList(),
     val capabilities: Map<String, Boolean> = emptyMap(),
 ) {

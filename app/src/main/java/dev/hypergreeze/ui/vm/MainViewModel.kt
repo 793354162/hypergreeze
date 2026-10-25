@@ -2,8 +2,10 @@ package dev.hypergreeze.ui.vm
 
 import android.app.Application
 import android.content.Intent
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.io.File
 import dev.hypergreeze.core.AppPolicy
 import dev.hypergreeze.core.Command
 import dev.hypergreeze.core.EventRecord
@@ -161,14 +163,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ------------------------------------------------------------------ policy writes
 
     private fun persist(policy: Policy) {
-        if (!gateway.canWrite()) {
-            notify("缺少「修改系统设置」权限，策略未保存")
-            return
-        }
+        // No WRITE_SETTINGS gate: the primary channel is our own prefs + provider. The Settings
+        // mirror inside writePolicy() is best effort and may be refused by the ROM.
         if (gateway.writePolicy(policy)) {
-            _state.update { it.copy(policy = policy, canWriteSettings = true) }
+            _state.update { it.copy(policy = policy) }
         } else {
-            notify("写入 Settings.System 被拒绝，请在诊断页做写入自检")
+            notify("策略写入失败：应用存储不可写")
         }
     }
 
@@ -263,10 +263,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ------------------------------------------------------------------ commands
 
     fun send(op: String, pkg: String? = null, uid: Int = 0, arg: String? = null) {
-        if (!gateway.canWrite()) {
-            notify("缺少「修改系统设置」权限，命令未发送")
-            return
-        }
         val command = Command(seq = gateway.currentSeq(), op = op, pkg = pkg, uid = uid, arg = arg)
         if (gateway.sendCommand(command)) {
             notify("指令已发送：$op")
@@ -285,6 +281,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun notifyManagerMissing() {
         notify("未找到 LSPosed 管理器；请手动打开并在「模块」里启用 HyperGreeze")
+    }
+
+    fun notifyExportFailed() {
+        notify("报告写入失败，检查应用存储空间")
     }
 
     fun thawEverything() = send(Command.OP_THAW_ALL)
@@ -310,8 +310,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setFreezeBinder(enabled: Boolean) = send(Command.OP_SET_BINDER, arg = if (enabled) "1" else "0")
 
     fun requestSafeMode() {
+        // This one really does need WRITE_SETTINGS: the hook side reads the request from Settings.
         if (!gateway.canWrite()) {
-            notify("缺少「修改系统设置」权限")
+            notify("安全模式请求需要「修改系统设置」权限")
             return
         }
         if (gateway.requestSafeMode("用户从界面请求")) {
@@ -342,26 +343,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> FreezeState.UNKNOWN
         }
 
-    fun diagnosticsReport(): String = buildString {
+    fun diagnosticsReport(): String {
         val s = _state.value
-        appendLine("# HyperGreeze 诊断报告")
-        appendLine("时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}")
-        appendLine("模块: ${s.heartbeat?.moduleVersion ?: "未知"}")
-        appendLine("框架: ${s.heartbeat?.frameworkName ?: "?"} ${s.heartbeat?.frameworkVersion ?: ""} api=${s.heartbeat?.apiVersion ?: 0}")
-        appendLine("进程: ${s.heartbeat?.processName ?: "?"}")
-        appendLine("构建: ${s.heartbeat?.buildFingerprint ?: "?"}")
-        appendLine("GreeZe: present=${s.heartbeat?.greezePresent} class=${s.heartbeat?.greezeClass} instance=${s.heartbeat?.instanceOk}")
-        appendLine("策略: rev=${s.policy.revision} apps=${s.policy.apps.size} enabled=${s.policy.global.enabled}")
-        appendLine("安全模式: ${s.heartbeat?.safeMode} reason=${s.heartbeat?.safeModeReason} guard=${s.heartbeat?.bootGuard}")
-        appendLine("钩子:")
-        s.heartbeat?.hooks?.forEach { hook ->
-            appendLine("  - ${hook.id} [${hook.state}] hits=${hook.hits} errors=${hook.errors} ${hook.note ?: ""}")
+        val hb = s.heartbeat
+        val time = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        return buildString {
+            appendLine("# HyperGreeze 诊断报告")
+            appendLine("time=$time")
+            appendLine("module=${hb?.moduleVersion ?: "?"}")
+            appendLine("framework=${hb?.frameworkName ?: "?"} ${hb?.frameworkVersion ?: ""} api=${hb?.apiVersion ?: 0}")
+            appendLine("process=${hb?.processName ?: "?"}")
+            appendLine("build=${hb?.buildFingerprint ?: "?"}")
+            appendLine("channel=${hb?.channel ?: "none"}")
+            appendLine("writeSettings=${if (s.canWriteSettings) "granted" else "denied"} (仅镜像通道)")
+            appendLine("greeze present=${hb?.greezePresent} class=${hb?.greezeClass} instance=${hb?.instanceOk}")
+            appendLine("policy rev=${s.policy.revision} apps=${s.policy.apps.size} enabled=${s.policy.global.enabled} expert=${s.policy.global.uiExpert}")
+            appendLine("safeMode=${hb?.safeMode} reason=${hb?.safeModeReason ?: "-"} guard=${hb?.bootGuard ?: 0}")
+            appendLine("suppressed=${hb?.suppressed} journalUndoable=${hb?.journalUndoable ?: 0}")
+            appendLine("heartbeatAgeMs=${s.heartbeatAgeMs}")
+
+            appendLine()
+            appendLine("## hooks")
+            hb?.hooks?.forEach { hook ->
+                appendLine("${hook.id}\t${hook.state}\thits=${hook.hits}\terrors=${hook.errors}\t${hook.note ?: ""}")
+            }
+
+            appendLine()
+            appendLine("## caps")
+            appendLine(hb?.capabilities?.entries?.joinToString(" ") { "${it.key}=${it.value}" } ?: "-")
+
+            appendLine()
+            appendLine("## events (newest first, max 15)")
+            s.events.take(15).forEach { appendLine("${formatStamp(it.ts)}\t${it.short()}") }
+
+            appendLine()
+            appendLine("## journal (newest first, max 15)")
+            s.journal.take(15).forEach { appendLine("${formatStamp(it.ts)}\t${it.oneLine}") }
+
+            appendLine()
+            appendLine("## logs (max 15)")
+            s.logs.takeLast(15).forEach { appendLine(it) }
         }
-        appendLine("能力:")
-        s.heartbeat?.capabilities?.forEach { (key, value) -> appendLine("  - $key=$value") }
-        appendLine("事件(最近 ${s.events.size}):")
-        s.events.take(30).forEach { appendLine("  - ${it.short()}") }
-        appendLine("日志(最近 ${s.logs.size}):")
-        s.logs.takeLast(40).forEach { appendLine("  - $it") }
+    }
+
+    private fun formatStamp(ts: Long): String =
+        if (ts <= 0) "--:--:--"
+        else java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(ts))
+
+    /**
+     * Writes the report next to the app's external files and returns the file, so the caller can
+     * hand it to a share sheet. Filesystem export instead of the clipboard: the report is far
+     * larger than a comfortable paste.
+     */
+    fun exportReport(): File? {
+        val app = getApplication<Application>()
+        val base = try {
+            app.getExternalFilesDir(null) ?: app.filesDir
+        } catch (_: Throwable) {
+            app.filesDir
+        }
+        val dir = File(base, "reports")
+        if (!dir.exists() && !dir.mkdirs()) return null
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+        val file = File(dir, "hypergreeze-$stamp.txt")
+        return try {
+            file.writeText(diagnosticsReport())
+            file
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun shareReportIntent(file: File): Intent {
+        val app = getApplication<Application>()
+        val uri = FileProvider.getUriForFile(app, "dev.hypergreeze.files", file)
+        return Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "HyperGreeze 诊断报告")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
     }
 }

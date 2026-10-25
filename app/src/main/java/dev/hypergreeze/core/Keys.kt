@@ -45,6 +45,33 @@ object Keys {
     val ALL: List<String> = listOf(
         POLICY, HEARTBEAT, EVENTS, LOGS, BOOT_GUARD, SAFE_MODE_REQUEST, SAFE_MODE_REASON, COMMAND, JOURNAL,
     )
+
+    // ------------------------------------------------------------------ provider channel (downlink)
+    //
+    // Some ROMs (observed on HyperOS) return `false` from `Settings.System.putString` for a
+    // third-party app even when `Settings.System.canWrite()` is true. The app -> hook direction
+    // therefore has a second, ROM-independent channel: the app writes its own SharedPreferences and
+    // serves them through a read-only ContentProvider; `system_server` queries it.
+    //
+    // The hook -> app direction (heartbeat / events / logs / journal) still uses Settings, because
+    // `system_server` is never blocked there.
+
+    const val AUTHORITY = "dev.hypergreeze.policy"
+    const val URI_POLICY = "content://$AUTHORITY/policy"
+    const val URI_COMMAND = "content://$AUTHORITY/command"
+    const val URI_PING = "content://$AUTHORITY/ping"
+
+    const val PREFS = "hypergreeze"
+    const val PREF_POLICY = "policy"
+    const val PREF_COMMAND = "command"
+    const val PREF_PING = "ping"
+}
+
+/** Which channel the hook side actually used to read the policy. Symptom of a blocked ROM. */
+object Channel {
+    const val PROVIDER = "provider"
+    const val SETTINGS = "settings"
+    const val NONE = "none"
 }
 
 object Module {

@@ -210,13 +210,20 @@ object GreezeProbe {
             }
         }
 
-        // onForegroundActivitiesChanged lives on an anonymous inner class (GreezeManagerService$13),
-        // never on the service itself: scan the declared classes for the 3-arg callback.
+        // onForegroundActivitiesChanged lives on an anonymous inner class (GreezeManagerService$13 on
+        // the analysed build), never on the service itself. Some builds move it, so the search also
+        // covers the filter/immobulus classes and, as a last resort, AOSP's own activity manager:
+        // the callback there is the source of truth and has the same 3-argument shape.
         var foregroundClass: Class<*>? = null
-        val foreground = findForegroundCallback(manager)?.also { (cls, method) ->
+        val foreground = findForegroundCallback(
+            manager,
+            listOfNotNull(filter, immobulus),
+            classLoader,
+        )?.also { (cls, method) ->
             foregroundClass = cls
             methods["onForegroundActivitiesChanged"] = method
             notes.add("foreground callback on ${cls.name}")
+            Logx.i("foreground callback resolved on ${cls.name}.${method.name}")
         }?.second
         if (foreground == null) notes.add("onForegroundActivitiesChanged 未找到")
 
@@ -255,14 +262,39 @@ object GreezeProbe {
         )
     }
 
-    private fun findForegroundCallback(manager: Class<*>): Pair<Class<*>, Method>? {
-        val candidates = ArrayList<Class<*>>()
-        candidates.add(manager)
-        try {
-            candidates.addAll(manager.declaredClasses)
-        } catch (_: Throwable) {
-            // ignore
+    /**
+     * Foreground callbacks, in order of preference. The first two are MIUI-internal; the last two
+     * are AOSP classes whose `onForegroundActivitiesChanged(int pid, int uid, boolean)` is the
+     * original source of the event, so a GreeZe build that moved its own callback still gets a
+     * usable trigger.
+     */
+    private val FOREGROUND_FALLBACK_CLASSES = arrayOf(
+        "com.android.server.wm.ActivityTaskManagerService",
+        "com.android.server.am.ActivityManagerService",
+    )
+
+    private fun findForegroundCallback(
+        manager: Class<*>,
+        extra: List<Class<*>>,
+        classLoader: ClassLoader?,
+    ): Pair<Class<*>, Method>? {
+        val candidates = LinkedHashSet<Class<*>>()
+        fun addCandidate(cls: Class<*>?) {
+            if (cls == null) return
+            candidates.add(cls)
+            try {
+                candidates.addAll(cls.declaredClasses)
+            } catch (_: Throwable) {
+                // ignore
+            }
         }
+        addCandidate(manager)
+        extra.forEach { addCandidate(it) }
+        for (name in FOREGROUND_FALLBACK_CLASSES) {
+            addCandidate(R.classOrNull(classLoader, name))
+        }
+
+        // Prefer the shape the analyser documented, then accept anything with the same name/arity.
         for (cls in candidates) {
             val method = R.method(cls, "onForegroundActivitiesChanged", 3) ?: continue
             return cls to method

@@ -32,6 +32,7 @@ object TelemetryCodec {
         root.put("lastSeq", hb.lastCommandSeq)
         root.put("journal", hb.journalUndoable)
         root.put("suppressed", hb.suppressed)
+        root.put("chan", hb.channel)
 
         val hooks = JSONArray()
         for (hook in hb.hooks) {
@@ -98,6 +99,7 @@ object TelemetryCodec {
                 lastCommandSeq = root.oLong("lastSeq") ?: 0L,
                 journalUndoable = root.oInt("journal") ?: 0,
                 suppressed = root.oBool("suppressed") ?: false,
+                channel = root.oStr("chan") ?: Channel.NONE,
                 hooks = hooks,
                 capabilities = caps,
             )

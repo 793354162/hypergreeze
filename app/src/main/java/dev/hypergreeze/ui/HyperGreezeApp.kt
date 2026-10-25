@@ -137,7 +137,20 @@ fun HyperGreezeApp(vm: MainViewModel) {
                         else -> DiagnosticsPage(
                             state = state,
                             onSelfTest = { vm.selfTest() },
-                            report = { vm.diagnosticsReport() },
+                            onExportReport = {
+                                val file = vm.exportReport()
+                                if (file == null) {
+                                    vm.notifyExportFailed()
+                                } else {
+                                    try {
+                                        context.startActivity(
+                                            Intent.createChooser(vm.shareReportIntent(file), "导出诊断报告"),
+                                        )
+                                    } catch (_: Throwable) {
+                                        vm.notifyExportFailed()
+                                    }
+                                }
+                            },
                             onRefresh = { vm.refreshAll() },
                             onRequestSafeMode = { vm.requestSafeMode() },
                             onClearSafeMode = { vm.clearSafeMode() },

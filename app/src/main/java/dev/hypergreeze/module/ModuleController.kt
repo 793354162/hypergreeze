@@ -9,6 +9,7 @@ import android.os.Looper
 import android.provider.Settings
 import dev.hypergreeze.core.Command
 import dev.hypergreeze.core.CommandCodec
+import dev.hypergreeze.core.Channel
 import dev.hypergreeze.core.EventType
 import dev.hypergreeze.core.FreezeMode
 import dev.hypergreeze.core.Heartbeat
@@ -147,19 +148,24 @@ class ModuleController(
         val policyStore = PolicyStore(ctx)
         store = policyStore
         policyStore.start()
-        lastRevision = policyStore.policy.revision
-
+        registerObservers(ctx)
         consumeSafeModeRequest(tm)
         consumeGuardReset(tm)
-        registerObservers(ctx)
-        applyGlobalSideEffects(policyStore.engine)
-        tm.record(
-            EventType.BOOT,
-            result = "boot",
-            detail = "hooks=${installer?.snapshot()?.count { it.state == HookState.INSTALLED } ?: 0}",
-        )
-        publishHeartbeat()
-        work?.post { processCommand() }
+
+        // A provider query can start our app process, so the first read happens on the worker.
+        work?.post {
+            policyStore.reload(allowProvider = true)
+            lastRevision = policyStore.policy.revision
+            applyGlobalSideEffects(policyStore.engine)
+            tm.record(
+                EventType.BOOT,
+                result = "boot",
+                detail = "hooks=${installer?.snapshot()?.count { it.state == HookState.INSTALLED } ?: 0}" +
+                    " channel=${policyStore.lastChannel}",
+            )
+            publishHeartbeat()
+            processCommand()
+        }
     }
 
     /**
@@ -207,23 +213,31 @@ class ModuleController(
         if (commandObserver != null) return
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean, uri: Uri?) {
-                work?.post { processCommand() }
+                work?.post {
+                    processCommand()
+                    // Policy changes also arrive through here when the provider notifies.
+                    store?.let { policyStore ->
+                        if (policyStore.reload(allowProvider = true)) {
+                            installer?.invalidateUidCache()
+                            applyGlobalSideEffects(policyStore.engine)
+                        }
+                    }
+                    publishHeartbeat()
+                }
             }
         }
         commandObserver = observer
-        try {
-            ctx.contentResolver.registerContentObserver(
-                Settings.System.getUriFor(Keys.COMMAND),
-                false,
-                observer,
-            )
-            ctx.contentResolver.registerContentObserver(
-                Settings.System.getUriFor(Keys.POLICY),
-                false,
-                observer,
-            )
-        } catch (t: Throwable) {
-            Logx.w("observer registration failed", t)
+        for (uri in listOf(
+            Keys.URI_POLICY,
+            Keys.URI_COMMAND,
+            Settings.System.getUriFor(Keys.COMMAND).toString(),
+            Settings.System.getUriFor(Keys.POLICY).toString(),
+        )) {
+            try {
+                ctx.contentResolver.registerContentObserver(Uri.parse(uri), true, observer)
+            } catch (t: Throwable) {
+                Logx.w("observer registration failed for $uri", t)
+            }
         }
     }
 
@@ -248,7 +262,8 @@ class ModuleController(
     private fun tick() {
         val policyStore = store ?: return
         tickCount++
-        if (policyStore.reload()) {
+        // Settings-only on the periodic path: reading the provider may start the app process.
+        if (policyStore.reload(allowProvider = false)) {
             installer?.invalidateUidCache()
             telemetry?.record(
                 EventType.INFO,
@@ -294,6 +309,7 @@ class ModuleController(
             lastCommandSeq = lastCommandSeq,
             journalUndoable = tm.journalUndoable(),
             suppressed = effector?.suppressed == true,
+            channel = store?.lastChannel ?: Channel.NONE,
             hooks = hooks.snapshot(),
             capabilities = refs?.capabilities() ?: emptyMap(),
         )
@@ -304,7 +320,7 @@ class ModuleController(
 
     private fun processCommand() {
         val tm = telemetry ?: return
-        val raw = tm.readString(Keys.COMMAND) ?: return
+        val raw = store?.readCommand() ?: tm.readString(Keys.COMMAND) ?: return
         val command = CommandCodec.decode(raw) ?: return
         if (command.seq <= lastCommandSeq) return
         lastCommandSeq = command.seq
