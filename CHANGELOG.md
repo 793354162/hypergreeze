@@ -2,6 +2,30 @@
 
 所有改动按「为什么」而不是「改了什么文件」记录。
 
+## [1.2.1] — 2026-10-25
+
+来自真机报告（Android 17 / OS4.0.5.0）的三处修补。
+
+### `IMMEDIATE` 不再依赖前台回调
+
+报告里 `foreground=missing`，也就是说一台 ROM 把回调搬走后，「退后台立即冻结」就整个失效。现在 `filter()` 兼任触发点：GreeZe 每次评估某个 App 都会调 `filter(uid, pkg, reason)`，如果该 App 是 `IMMEDIATE` 模式、且 `reason` 里**没有任何"正在使用"位**（TOP / VISIBLE / 分屏 / IME / 灵动岛 / 悬浮窗 / 远程视图），就按策略触发一次强制冻结（沿用去重、延时、冷却、已冻结检查）。
+
+这是启发式而不是精确的 fg→bg 事件：`reason` 为空（0）时**不**触发，避免把前台应用冻掉。
+
+### 前台回调定位加深
+
+* 候选类递归两层（覆盖 AOSP 的 `...Service$LocalService` 这种嵌套实现）。
+* 找不到时把候选类里所有名字含 `Foreground` 的方法名与参数个数写进日志，并把扫描的内部类数量写进诊断页 note —— 下次报告就能定位是"类不对"还是"参数个数变了"。
+* 启动时额外记录 `GreezeManagerService` 的内部类清单（截断 600 字符），便于人工比对。
+
+### 诊断报告更能自查
+
+* 新增 `appChannel`：同一份策略在 **prefs** 与 **provider** 两侧各多少字节 —— 一眼区分"App 没写"和"hook 读不到"。
+* 新增 `appSelfTest`：真实下行链路自检结果。
+* `policy(app)` 与 `policy(hook)` 分列，能看出 hook 侧是否真的收到了策略。
+* 末尾多一条 `hint`，直接给结论（还没配置 / 下行正常 / 走了 Settings 回退 / 两条都读不到）。
+* 日志上限 15 → 40，事件与账本 15 → 20。
+
 ## [1.2.0] — 2026-10-25
 
 修复「HyperOS 上 `WRITE_SETTINGS` 显示已授权、但 `Settings.System.putString` 返回 false，导致策略根本存不进去」。
