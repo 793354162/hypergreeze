@@ -2,6 +2,32 @@
 
 所有改动按「为什么」而不是「改了什么文件」记录。
 
+## [1.2.0] — 2026-10-25
+
+修复「HyperOS 上 `WRITE_SETTINGS` 显示已授权、但 `Settings.System.putString` 返回 false，导致策略根本存不进去」。
+
+### 下行通道改为双通道（provider 优先）
+
+* App 把策略/命令写进自己的 SharedPreferences，通过**只读 `ContentProvider`**（`content://dev.hypergreeze.policy/policy`）暴露；`system_server` 直接 `query`。这条路不依赖任何权限，ROM 无法拒绝。
+* `Settings.System` 退化为**镜像 + 迁移回退**：能写就写（`adb shell settings get` 仍可用），写不进去不影响主通道。
+* 写入成功判定改为 `SharedPreferences.commit()` 的结果；UI 不再因为缺 `WRITE_SETTINGS` 就禁止保存（该权限现在只影响镜像与安全模式请求）。
+* provider 只允许 `uid 1000 / 0 / 自身` 读取，`insert/update/delete` 一律抛异常 —— 导出一个只读通道不会变成改策略的入口。
+* **防止策略被清空**：周期 tick 只读 Settings（避免每 5 秒拉起 App 进程）；当 Settings 不可读且没有 provider 应答时**保留**当前策略。此前这种组合会把策略静默重置成「全部跟随」。
+* 诊断页新增「策略通道」：显示 hook 侧最后一次读到策略的来源（provider / settings / none）；写入自检改为真实链路（prefs → provider → 读回）并单独报告 Settings 镜像是否可用。
+
+### `foreground` hook 不再 missing
+
+在 `GreezeManagerService` 的内部类里找不到 `onForegroundActivitiesChanged(int,int,boolean)` 时，依次回退到 `AurogonFilterManager` / `AurogonImmobulusMode` 的内部类，以及 AOSP 的 `ActivityTaskManagerService` / `ActivityManagerService` 同名 3 参回调。诊断页的 note 会显示实际落点类名。
+
+### 诊断报告导出到文件
+
+* 不再用剪贴板（内容太长，粘贴板存不下）。报告写入 `getExternalFilesDir/reports/hypergreeze-<时间>.txt`，通过 `FileProvider` + 系统分享面板导出。
+* 报告本身也压缩：固定字段 + hooks 全量 + caps 单行 + 事件/账本/日志各上限 15 条。
+
+### CI
+
+* 新增断言：APK 的 manifest 必须同时包含 `dev.hypergreeze.policy` 与 `dev.hypergreeze.files` 两个 authority（防止 provider 被误删而「静默退回不可用」）。
+
 ## [1.1.0] — 2026-10-25
 
 主题：**可恢复性、易理解性、性能、外观**（详见 `docs/ROADMAP.md`）。
