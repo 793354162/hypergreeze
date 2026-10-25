@@ -1,6 +1,6 @@
 # HyperGreeze 通道与策略 Schema
 
-> 本文是 `Settings.System` 通道的唯一契约文档。键名、字段名、取值、默认值、上限逐条对照代码，行内标注 `文件:行`。
+> 本文是通道与策略的唯一契约文档。键名、字段名、取值、默认值、上限逐条对照代码，行内标注 `文件:行`。1.2.0 起下行（App → hook）主通道是只读 `ContentProvider`，`Settings.System` 为镜像与迁移回退；上行（hook → App）仍是 `Settings.System`。
 > 代码里没有的东西，本文一律留空；代码与本文冲突时以代码为准，并请同步改本文。
 > 锚点写成 `文件:行`，且每条都同时给出符号名（方法/字段/键）；代码改动导致行号漂移时，以符号名为准。
 >
@@ -36,7 +36,8 @@
 
 | 方案 | 报告 §3.2 的判断 | 本模块的取舍 | 代价 / 边界 |
 |---|---|---|---|
-| **`Settings.System` JSON 键** | 推荐。App 侧需 `WRITE_SETTINGS`；`system_server` 直接读；无 SELinux 问题；跨重启持久；可被 `ContentObserver` 监听；天然按用户分库 | **采用，单通道双文档**（App→hook 写 `policy`/`command`，hook→App 写 `heartbeat`/`events`/`logs`） | App 必须拿到 appop `WRITE_SETTINGS`，否则写入被拒（`ui/data/Repos.kt:48-55` 显式返回 `false`，UI 报错而不假装保存） |
+| **`Settings.System` JSON 键** | 推荐。App 侧需 `WRITE_SETTINGS`；`system_server` 直接读；无 SELinux 问题；跨重启持久；可被 `ContentObserver` 监听；天然按用户分库 | **仅用于上行与镜像**。1.2.0 起下行改为 `ContentProvider`（下文 §1.0） | 实测部分 HyperOS 上 `putString` 对三方 App 返回 `false`（`canWrite()` 却为真），所以不能把它当唯一通道 |
+| **只读 `ContentProvider`（App 自己的 prefs）** | 报告 §3.2 没列，属于实测补的方案 | **下行主通道**：`content://dev.hypergreeze.policy/{policy,command,ping}`，只允许 uid 1000 / 0 / 自身读取，写操作一律抛异常 | 读它会拉起 App 进程，所以周期 tick 只读 Settings、只有开机/通知/命令路径才查 provider |
 | `XSharedPreferences` + `xposedsharedprefs` meta-data | 只读语义为主、写回不实时，适合当 boot 期初值 | 不用 | 两个独立原因：①本模块要「UI 改完秒级生效 + 回读心跳」的双向语义，prefs 是 key-value 增量、不是整份文档；②新 API 下它属 legacy 路径（既有定论见 `ARCHITECTURE.md` §2） |
 | 广播（hook → UI 回写） | 适合事件推送，不适合大数据 | 只留常量 `Keys.ACTION_STATE_CHANGED`（`core/Keys.kt:36`），**当前代码没有发送方也没有接收方** | 快路径实际由 `ContentObserver` + 5 s tick 轮询承担（`ModuleController.kt:165-187, 191-228`） |
 | Unix abstract socket / 文件 | `system_server` 连 App socket 常被 SELinux 拦；App 写 `/data/system/` 走不通 | 不用 | 一旦被 SELinux 拦就是整条通道静默失效，没有可观测的失败信号 |

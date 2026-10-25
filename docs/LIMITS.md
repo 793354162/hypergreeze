@@ -1,5 +1,7 @@
 # 能力边界、未做实项与未确证清单
 
+> **1.2.0 通道变更（真机实测驱动）**：部分 HyperOS 机型上 `Settings.System.putString` 对三方 App 返回 `false`，即使 `Settings.System.canWrite()` 为真 —— 也就是说「按文档应该能写」的通道在这些机器上是死的。所以 app → hook 的下行改为 **provider 优先**：App 把策略写进自己的 SharedPreferences，通过只读 `ContentProvider`（`content://dev.hypergreeze.policy/policy`）暴露，`system_server` 直接 `query`。`Settings.System` 退化为镜像与迁移回退；hook → App 的上行（心跳/事件/日志/账本）仍走 Settings，因为 `system_server` 侧不受该限制。诊断页「策略通道」显示 hook 侧实际来源（provider / settings / none）。
+
 > 目标读者：准备把这个模块装到真机上、或者准备接手改它的人。
 > 三份材料的分工：**契约** = `../../Greeze反射契约.md`（字节码签名/字段/位值），**报告** = `../../LSPosed-Greeze逐App冻结控制模块可行性分析.md`（粒度阶梯与硬上限），**代码** = 本仓库 `app/src/main/java/dev/hypergreeze/`。
 > `文件:行` 的文件名省略 `app/src/main/java/dev/hypergreeze/` 前缀。除特别标注外，全部是静态分析 + 代码阅读结论，**未在真机验证**。
