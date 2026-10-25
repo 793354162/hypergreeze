@@ -285,6 +285,15 @@ class HookInstaller(
                     detail = "filter override",
                 )
             }
+            // Foreground-independent trigger for IMMEDIATE mode. GreeZe calls filter() whenever it
+            // evaluates an app; a call with none of the "in use" bits means the app is not in front.
+            // Without this, IMMEDIATE mode dies on ROMs where the foreground callback moved.
+            if (engine.forceFreezeOnBackground(pkg) &&
+                reason and IN_USE_MASK == 0 &&
+                reason != 0
+            ) {
+                onBackground(uid, 0)
+            }
             verdict
         } catch (t: Throwable) {
             hit(ID_FILTER, error = true)
@@ -629,5 +638,8 @@ class HookInstaller(
             ID_FOREGROUND,
             ID_SCREEN_ON,
         )
+
+        /** Cached bitmask of [SceneBit.IN_USE] so the filter hot path does no set arithmetic. */
+        val IN_USE_MASK: Int = SceneBit.toMask(SceneBit.IN_USE)
     }
 }

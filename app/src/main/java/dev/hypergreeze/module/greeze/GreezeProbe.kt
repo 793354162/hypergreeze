@@ -225,7 +225,9 @@ object GreezeProbe {
             notes.add("foreground callback on ${cls.name}")
             Logx.i("foreground callback resolved on ${cls.name}.${method.name}")
         }?.second
-        if (foreground == null) notes.add("onForegroundActivitiesChanged 未找到")
+        if (foreground == null) {
+            notes.add("onForegroundActivitiesChanged 未找到（候选类 ${manager.declaredClasses.size} 个内部类已扫描）")
+        }
 
         val fields = LinkedHashMap<String, Field>()
         for (spec in FIELD_SPECS) {
@@ -279,25 +281,54 @@ object GreezeProbe {
         classLoader: ClassLoader?,
     ): Pair<Class<*>, Method>? {
         val candidates = LinkedHashSet<Class<*>>()
-        fun addCandidate(cls: Class<*>?) {
-            if (cls == null) return
-            candidates.add(cls)
+
+        fun addCandidate(cls: Class<*>?, depth: Int) {
+            if (cls == null || depth < 0) return
+            if (!candidates.add(cls)) return
             try {
-                candidates.addAll(cls.declaredClasses)
+                cls.declaredClasses.forEach { addCandidate(it, depth - 1) }
             } catch (_: Throwable) {
                 // ignore
             }
         }
-        addCandidate(manager)
-        extra.forEach { addCandidate(it) }
+
+        // Depth 2: GreeZe's callback may be an inner class of an inner class, and AOSP keeps its
+        // implementation in `...Service$LocalService`.
+        addCandidate(manager, 2)
+        extra.forEach { addCandidate(it, 2) }
         for (name in FOREGROUND_FALLBACK_CLASSES) {
-            addCandidate(R.classOrNull(classLoader, name))
+            addCandidate(R.classOrNull(classLoader, name), 2)
         }
 
-        // Prefer the shape the analyser documented, then accept anything with the same name/arity.
+        try {
+            val inner = manager.declaredClasses.map { it.simpleName }
+            Logx.i("GreeZe inner classes (${inner.size}): ${inner.joinToString(",").take(600)}")
+        } catch (_: Throwable) {
+            // ignore
+        }
+
+        // Anything that smells like a foreground callback, whatever its signature, is worth
+        // logging: a wrong arity is the most likely reason a build stops matching.
+        val attempts = LinkedHashSet<String>()
         for (cls in candidates) {
-            val method = R.method(cls, "onForegroundActivitiesChanged", 3) ?: continue
-            return cls to method
+            val method = R.method(cls, "onForegroundActivitiesChanged", 3)
+            if (method != null) return cls to method
+            try {
+                val named = R.declaredMethods(cls).filter {
+                    it.name.contains("Foreground", ignoreCase = true)
+                }
+                if (named.isNotEmpty()) {
+                    attempts += "${cls.simpleName}:" +
+                        named.joinToString(",") { "${it.name}/${it.parameterCount}" }
+                }
+            } catch (_: Throwable) {
+                // ignore
+            }
+        }
+        if (attempts.isNotEmpty()) {
+            Logx.w("foreground candidates: " + attempts.joinToString(" | ").take(700))
+        } else {
+            Logx.w("foreground: none of ${candidates.size} candidate classes declares a *Foreground* method")
         }
         return null
     }

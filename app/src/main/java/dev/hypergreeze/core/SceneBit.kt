@@ -61,6 +61,16 @@ enum class SceneBit(val value: Int, val label: String, val group: Group) {
         /** Dropping these exemptions makes the app freeze while it is visibly in use. */
         val LOCKED_DROP: Set<SceneBit> = setOf(AUDIO, CAMERA, TOP, IME, VISIBLE, VIBRATOR)
 
+        /**
+         * "The app is being used right now" bits. Used by the foreground-independent trigger:
+         * `filter()` is called by GreeZe whenever it evaluates an app, so a call *without* any of
+         * these bits is a strong hint that the app is no longer in front — which is what
+         * IMMEDIATE mode needs when the ROM moved its foreground callback.
+         */
+        val IN_USE: Set<SceneBit> = setOf(
+            TOP, VISIBLE, MUTI_WINDOW, IME, DYNAMIC_ISLAND, WINDOW_OVERLAY, REMOTE_VIEW,
+        )
+
         /** Preselected as "keep" for a new custom policy: what breaks calls / camera most often. */
         val DEFAULT_KEEP: Set<SceneBit> = setOf(AUDIO, CAMERA, BLUETOOTH)
 

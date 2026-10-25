@@ -356,8 +356,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             appendLine("build=${hb?.buildFingerprint ?: "?"}")
             appendLine("channel=${hb?.channel ?: "none"}")
             appendLine("writeSettings=${if (s.canWriteSettings) "granted" else "denied"} (仅镜像通道)")
+            appendLine("appChannel=${gateway.channelSnapshot()}")
+            appendLine("appSelfTest=${gateway.selfTest()}")
             appendLine("greeze present=${hb?.greezePresent} class=${hb?.greezeClass} instance=${hb?.instanceOk}")
-            appendLine("policy rev=${s.policy.revision} apps=${s.policy.apps.size} enabled=${s.policy.global.enabled} expert=${s.policy.global.uiExpert}")
+            appendLine("policy(app) rev=${s.policy.revision} apps=${s.policy.apps.size} enabled=${s.policy.global.enabled} expert=${s.policy.global.uiExpert}")
+            appendLine("policy(hook) rev=${hb?.revision ?: -1}")
             appendLine("safeMode=${hb?.safeMode} reason=${hb?.safeModeReason ?: "-"} guard=${hb?.bootGuard ?: 0}")
             appendLine("suppressed=${hb?.suppressed} journalUndoable=${hb?.journalUndoable ?: 0}")
             appendLine("heartbeatAgeMs=${s.heartbeatAgeMs}")
@@ -373,16 +376,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             appendLine(hb?.capabilities?.entries?.joinToString(" ") { "${it.key}=${it.value}" } ?: "-")
 
             appendLine()
-            appendLine("## events (newest first, max 15)")
-            s.events.take(15).forEach { appendLine("${formatStamp(it.ts)}\t${it.short()}") }
+            appendLine("## events (newest first, max 20)")
+            s.events.take(20).forEach { appendLine("${formatStamp(it.ts)}\t${it.short()}") }
 
             appendLine()
-            appendLine("## journal (newest first, max 15)")
-            s.journal.take(15).forEach { appendLine("${formatStamp(it.ts)}\t${it.oneLine}") }
+            appendLine("## journal (newest first, max 20)")
+            s.journal.take(20).forEach { appendLine("${formatStamp(it.ts)}\t${it.oneLine}") }
 
             appendLine()
-            appendLine("## logs (max 15)")
-            s.logs.takeLast(15).forEach { appendLine(it) }
+            appendLine("## logs (max 40)")
+            s.logs.takeLast(40).forEach { appendLine(it) }
+
+            // Actionable verdict instead of making the reader infer it from two numbers.
+            appendLine()
+            appendLine("## hint")
+            appendLine(
+                when {
+                    s.policy.apps.isEmpty() -> "App 里还没有配置任何策略；先设一个「永不冻结」再看事件与账本"
+                    hb?.channel == "provider" -> "下行正常（provider）；后续看 events/journal 是否有记录"
+                    hb?.channel == "settings" -> "下行走了 Settings 回退；provider 没被读到，检查 appChannel 行"
+                    else -> "下行两条都没读到；对照 appChannel（prefs/provider 字节数）判断是 App 没写还是 hook 读不到"
+                },
+            )
         }
     }
 

@@ -160,6 +160,33 @@ class SettingsGateway(private val context: Context) {
     } else {
         "provider 为主（无需 WRITE_SETTINGS）"
     }
+
+    /**
+     * Read-only view of both sides of the downlink: what we wrote into prefs, and what the provider
+     * actually returns for the same URI the hook side queries. A mismatch here means the problem is
+     * on the app side; a match means the hook side could not reach us.
+     */
+    fun channelSnapshot(): String {
+        val fromPrefs = prefs.getString(Keys.PREF_POLICY, null)?.length ?: 0
+        val fromProvider = queryProviderLength(Keys.URI_POLICY)
+        val cmdPrefs = prefs.getString(Keys.PREF_COMMAND, null)?.length ?: 0
+        val cmdProvider = queryProviderLength(Keys.URI_COMMAND)
+        return "prefs=${fromPrefs}B provider=${fromProvider}B | cmd prefs=${cmdPrefs}B provider=${cmdProvider}B"
+    }
+
+    private fun queryProviderLength(uri: String): Int = try {
+        context.contentResolver.query(
+            Uri.parse(uri),
+            arrayOf("value"),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0)?.length ?: 0 else 0
+        } ?: -1
+    } catch (_: Throwable) {
+        -1
+    }
 }
 
 data class AppEntry(
