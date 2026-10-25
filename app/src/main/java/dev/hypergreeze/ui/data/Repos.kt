@@ -79,7 +79,15 @@ class SettingsGateway(private val context: Context) {
         return ok
     }
 
-    fun readPolicy(): Policy = PolicyCodec.decode(prefs.getString(Keys.PREF_POLICY, null))
+    /**
+     * Policy as the app sees it. Prefs first (the authoritative copy), Settings as a migration
+     * fallback for installs that were configured before the provider channel existed.
+     */
+    fun readPolicy(): Policy {
+        val fromPrefs = prefs.getString(Keys.PREF_POLICY, null)
+        val raw = if (!fromPrefs.isNullOrBlank()) fromPrefs else readRaw(Keys.POLICY)
+        return PolicyCodec.decode(raw)
+    }
 
     fun writePolicy(policy: Policy): Boolean {
         val json = PolicyCodec.encode(policy)

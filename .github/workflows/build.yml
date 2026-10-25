@@ -83,6 +83,12 @@ jobs:
           "$ANDROID_HOME"/build-tools/35.0.0/aapt2 dump badging "$APK" | head -5
           echo "--- xposed entries in apk ---"
           unzip -l "$APK" | grep -E "META-INF/xposed/" || (echo "MISSING META-INF/xposed/" && exit 1)
+          echo "--- providers in manifest ---"
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt2"
+          "$AAPT" dump xmltree --file AndroidManifest.xml "$APK" > "$RUNNER_TEMP/manifest.txt"
+          grep -E "dev.hypergreeze.(policy|files)" "$RUNNER_TEMP/manifest.txt" \
+            || (echo "MISSING policy/FileProvider authorities" && exit 1)
+          grep -E "E: provider" "$RUNNER_TEMP/manifest.txt" | head -4
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4

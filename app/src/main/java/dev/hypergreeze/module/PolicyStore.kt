@@ -98,18 +98,40 @@ class PolicyStore(private val context: Context) {
         }
     }
 
+    /** Last value seen in the Settings mirror, used to tell "deleted" from "cannot be read". */
+    private var lastSettingsRaw: String? = null
+
     /** Returns true when the effective policy changed. */
     fun reload(allowProvider: Boolean = true): Boolean {
         val fromProvider = if (allowProvider) queryProvider(Keys.URI_POLICY) else null
-        val raw: String?
-        if (!fromProvider.isNullOrBlank()) {
-            raw = fromProvider
-            lastChannel = Channel.PROVIDER
-        } else {
-            val fromSettings = readSettings(Keys.POLICY)
-            raw = fromSettings
-            lastChannel = if (fromSettings.isNullOrBlank()) Channel.NONE else Channel.SETTINGS
+        val fromSettings = readSettings(Keys.POLICY)
+        val settingsDeleted = lastSettingsRaw != null && fromSettings == null
+        lastSettingsRaw = fromSettings
+
+        val raw: String? = when {
+            !fromProvider.isNullOrBlank() -> {
+                lastChannel = Channel.PROVIDER
+                fromProvider
+            }
+
+            !fromSettings.isNullOrBlank() -> {
+                lastChannel = Channel.SETTINGS
+                fromSettings
+            }
+
+            settingsDeleted -> {
+                // The mirror used to hold a policy and now does not: honour the deletion.
+                lastChannel = Channel.NONE
+                null
+            }
+
+            else -> {
+                // No information at all (Settings write blocked on this ROM and no provider answer).
+                // Keep the current policy instead of silently reverting to "everything follows".
+                return false
+            }
         }
+
         lastReloadAt = System.currentTimeMillis()
         if (raw == rawCache) return false
 
